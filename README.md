@@ -53,6 +53,8 @@ Run tests:
 .venv/bin/python -m pytest -q
 ```
 
+See [TODO.md](TODO.md) for planned features and follow-up work.
+
 ## API Endpoints Used
 
 - `GET https://api.vedur.is/weather/stations?active=true&station_type=sj`
