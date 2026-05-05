@@ -497,12 +497,15 @@ class VedurIsStationWeatherEntity(
             ATTR_OBSERVATION_STATION_NAME: self._station.name,
         }
 
-        station_forecast = self._station_forecast
-        if station_forecast is not None:
+        forecast_result = self._nearest_forecast_station
+        station_forecast = self._forecast
+        if forecast_result is not None and station_forecast is not None:
+            forecast_station, forecast_distance = forecast_result
             attrs.update(
                 {
-                    ATTR_FORECAST_STATION_ID: self._station.station_id,
+                    ATTR_FORECAST_STATION_ID: forecast_station.station_id,
                     ATTR_FORECAST_STATION_NAME: station_forecast.name,
+                    ATTR_FORECAST_STATION_DISTANCE_KM: round(forecast_distance, 2),
                 }
             )
 
@@ -517,7 +520,7 @@ class VedurIsStationWeatherEntity(
 
     async def async_forecast_hourly(self) -> list[Forecast] | None:
         """Return hourly forecasts for the station."""
-        station_forecast = self._station_forecast
+        station_forecast = self._forecast
         if station_forecast is None:
             return []
 
@@ -525,7 +528,7 @@ class VedurIsStationWeatherEntity(
 
     async def async_forecast_daily(self) -> list[Forecast] | None:
         """Return daily forecasts for the station."""
-        station_forecast = self._station_forecast
+        station_forecast = self._forecast
         if station_forecast is None:
             return []
 
@@ -533,7 +536,7 @@ class VedurIsStationWeatherEntity(
 
     async def async_forecast_twice_daily(self) -> list[Forecast] | None:
         """Return twice-daily forecasts for the station."""
-        station_forecast = self._station_forecast
+        station_forecast = self._forecast
         if station_forecast is None:
             return []
 
@@ -547,16 +550,35 @@ class VedurIsStationWeatherEntity(
         return self.coordinator.data.observations.get(self._station.station_id)
 
     @property
-    def _station_forecast(self) -> StationForecast | None:
-        """Return the XML forecast for this station."""
+    def _forecast(self) -> StationForecast | None:
+        """Return the nearest XML forecast for this station."""
+        station_result = self._nearest_forecast_station
+        if station_result is None or self.coordinator.data is None:
+            return None
+
+        return self.coordinator.data.forecasts.get(station_result[0].station_id)
+
+    @property
+    def _nearest_forecast_station(self) -> tuple[Station, float] | None:
+        """Return the nearest station with XML forecast data."""
         if self.coordinator.data is None:
             return None
-        return self.coordinator.data.forecasts.get(self._station.station_id)
+
+        station_coordinate = _station_coordinate(self._station)
+        if station_coordinate is None:
+            return None
+
+        stations = (
+            self.coordinator.data.stations[station_id]
+            for station_id in self.coordinator.data.forecasts
+            if station_id in self.coordinator.data.stations
+        )
+        return nearest_station(station_coordinate, stations)
 
     @property
     def _current_forecast_point(self) -> ForecastPoint | None:
         """Return the current or next forecast point for this station."""
-        station_forecast = self._station_forecast
+        station_forecast = self._forecast
         if station_forecast is None:
             return None
 
@@ -652,3 +674,10 @@ def _coordinate_from_state(state: State) -> Coordinate | None:
         return Coordinate(float(latitude), float(longitude))
     except (TypeError, ValueError):
         return None
+
+
+def _station_coordinate(station: Station) -> Coordinate | None:
+    if station.latitude is None or station.longitude is None:
+        return None
+
+    return Coordinate(station.latitude, station.longitude)
