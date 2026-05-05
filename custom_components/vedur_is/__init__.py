@@ -71,7 +71,11 @@ def _async_remove_stale_registry_entries(hass: Any, entry: Any) -> None:
     device_registry = dr.async_get(hass)
 
     if not entry_config.get(CONF_ENABLE_PERSON_WEATHER, True):
-        _async_remove_person_weather_registry_entries(entity_registry, entry)
+        _async_remove_person_weather_registry_entries(
+            entity_registry,
+            device_registry,
+            entry,
+        )
 
     for device in list(device_registry.devices.values()):
         vedur_identifiers = [
@@ -83,6 +87,8 @@ def _async_remove_stale_registry_entries(hass: Any, entry: Any) -> None:
             continue
 
         station_id = vedur_identifiers[0][1]
+        if station_id == "home_weather" or station_id.startswith("person_weather:"):
+            continue
         if station_id in configured_station_ids:
             continue
 
@@ -110,6 +116,7 @@ def _async_remove_stale_registry_entries(hass: Any, entry: Any) -> None:
 
 def _async_remove_person_weather_registry_entries(
     entity_registry: Any,
+    device_registry: Any,
     entry: Any,
 ) -> None:
     """Remove person-following weather entities for a config entry."""
@@ -128,3 +135,18 @@ def _async_remove_person_weather_registry_entries(
                 entity.entity_id,
             )
             entity_registry.async_remove(entity.entity_id)
+
+    for device in list(device_registry.devices.values()):
+        if entry.entry_id not in device.config_entries:
+            continue
+
+        if any(
+            identifier[0] == DOMAIN
+            and str(identifier[1]).startswith("person_weather:")
+            for identifier in device.identifiers
+        ):
+            _LOGGER.debug(
+                "Removing Vedur.is person weather device registry entry: %s",
+                device.name,
+            )
+            device_registry.async_remove_device(device.id)

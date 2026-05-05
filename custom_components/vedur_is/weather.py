@@ -127,6 +127,10 @@ class VedurIsPersonWeatherEntity(
         self._person_entity_id = person_entity_id
         self._attr_unique_id = f"{DOMAIN}_{person_entity_id}_weather"
         self._attr_name = _person_name(coordinator.hass.states.get(person_entity_id))
+        self._attr_device_info = self._person_device_info(
+            person_entity_id,
+            self._attr_name,
+        )
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to person state changes."""
@@ -359,6 +363,15 @@ class VedurIsPersonWeatherEntity(
         except (TypeError, ValueError):
             return None
 
+    def _person_device_info(self, person_entity_id: str, name: str) -> DeviceInfo:
+        """Return device registry metadata for a person-following weather entity."""
+        return {
+            "identifiers": {(DOMAIN, f"person_weather:{person_entity_id}")},
+            "name": name,
+            "manufacturer": "Icelandic Met Office",
+            "model": "Person-following weather",
+        }
+
 
 class VedurIsHomeWeatherEntity(VedurIsPersonWeatherEntity):
     """Weather entity that follows the Home Assistant home zone."""
@@ -371,6 +384,7 @@ class VedurIsHomeWeatherEntity(VedurIsPersonWeatherEntity):
         super().__init__(coordinator, "zone.home")
         self._attr_unique_id = f"{DOMAIN}_home_weather"
         self._attr_name = "Home"
+        self._attr_device_info = self._device_info()
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -379,6 +393,15 @@ class VedurIsHomeWeatherEntity(VedurIsPersonWeatherEntity):
         attrs.pop("person_entity_id", None)
         attrs["zone_entity_id"] = self._person_entity_id
         return attrs
+
+    def _device_info(self) -> DeviceInfo:
+        """Return device registry metadata for the home weather entity."""
+        return {
+            "identifiers": {(DOMAIN, "home_weather")},
+            "name": "Home",
+            "manufacturer": "Icelandic Met Office",
+            "model": "Home weather",
+        }
 
 
 class VedurIsStationWeatherEntity(
