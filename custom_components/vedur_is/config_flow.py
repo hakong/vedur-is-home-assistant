@@ -65,7 +65,7 @@ class VedurIsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_select(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.ConfigFlowResult:
-        """Select one or more active stations."""
+        """Select optional active stations."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
@@ -74,9 +74,7 @@ class VedurIsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 for station_id in user_input.get(CONF_STATION_IDS, [])
             ]
 
-            if not selected_ids:
-                errors["base"] = "no_selection"
-            elif already_configured := self._already_configured(selected_ids):
+            if already_configured := self._already_configured(selected_ids):
                 errors[CONF_STATION_IDS] = "already_configured"
                 self.context["description_placeholders"] = {
                     "stations": ", ".join(
@@ -187,9 +185,7 @@ class VedurIsOptionsFlow(config_entries.OptionsFlow):
                 True,
             )
 
-            if not selected_ids:
-                errors["base"] = "no_selection"
-            elif already_configured := _already_configured(
+            if already_configured := _already_configured(
                 self.hass.config_entries.async_entries(DOMAIN),
                 selected_ids,
                 ignore_entry_id=self._config_entry.entry_id,
@@ -276,6 +272,8 @@ def _select_schema(
 def _entry_title(stations: dict[int, Station], station_ids: list[int]) -> str:
     """Return a human-friendly config entry title."""
     station_names = [stations[station_id].name for station_id in station_ids]
+    if not station_names:
+        return "Vedur.is: Home"
     if len(station_names) <= 2:
         return "Vedur.is: " + ", ".join(station_names)
     return (

@@ -7,7 +7,7 @@
       },
       "select": {
         "title": "Select stations",
-        "description": "Choose one or more active stations to create weather entities for. Individual metric sensors are available as disabled diagnostic entities.",
+        "description": "The integration always creates weather for Home. Optionally choose active stations to create additional weather entities. Individual metric sensors are available as disabled diagnostic entities.",
         "data": {
           "station_ids": "Stations",
           "enable_person_weather": "Create weather entities for people"
@@ -18,7 +18,6 @@
       "already_configured": "One or more selected stations are already configured.",
       "cannot_connect": "Could not connect to vedur.is.",
       "invalid_response": "vedur.is returned an unexpected response.",
-      "no_selection": "Select at least one station.",
       "no_stations": "No active automatic stations matched the search."
     },
     "abort": {
@@ -33,7 +32,7 @@
       },
       "select": {
         "title": "Select stations",
-        "description": "Choose the full station list for this integration entry. Individual metric sensors are available as disabled diagnostic entities.",
+        "description": "Weather for Home is always created. Optionally choose active stations to create additional weather entities. Individual metric sensors are available as disabled diagnostic entities.",
         "data": {
           "station_ids": "Stations",
           "enable_person_weather": "Create weather entities for people"
@@ -43,8 +42,7 @@
     "error": {
       "already_configured": "One or more selected stations are already configured in another entry.",
       "cannot_connect": "Could not connect to vedur.is.",
-      "invalid_response": "vedur.is returned an unexpected response.",
-      "no_selection": "Select at least one station."
+      "invalid_response": "vedur.is returned an unexpected response."
     }
   },
   "entity": {

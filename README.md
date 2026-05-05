@@ -6,9 +6,10 @@ and forecast data from the Icelandic Met Office.
 ## Features
 
 - UI config flow.
-- Multiple selected stations in one config entry.
+- Weather for Home by default, using Home Assistant's home zone.
+- Optional station selection for additional station weather entities.
+- Multiple optional stations in one config entry.
 - Weather entities for selected stations.
-- Weather entity for Home Assistant's home zone.
 - Optional weather entities that follow Home Assistant `person` entities.
 - Hourly, daily, and twice-daily forecasts through `weather.get_forecasts`.
 - Hourly polling through a `DataUpdateCoordinator`.
