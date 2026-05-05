@@ -19,6 +19,7 @@ from .const import (
     CONF_STATION_IDS,
     CONF_STATIONS,
     DOMAIN,
+    ENTRY_TITLE,
     SENSOR_KEYS,
 )
 
@@ -82,7 +83,6 @@ class VedurIsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     )
                 }
             else:
-                title = self._entry_title(selected_ids)
                 enable_person_weather = user_input.get(
                     CONF_ENABLE_PERSON_WEATHER,
                     True,
@@ -94,7 +94,7 @@ class VedurIsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self._abort_if_unique_id_configured()
 
                 return self.async_create_entry(
-                    title=title,
+                    title=ENTRY_TITLE,
                     data={
                         CONF_STATION_IDS: selected_ids,
                         CONF_STATIONS: [
@@ -123,10 +123,6 @@ class VedurIsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             default_station_ids=[],
             default_enable_person_weather=enable_person_weather,
         )
-
-    def _entry_title(self, station_ids: list[int]) -> str:
-        """Return a human-friendly config entry title."""
-        return _entry_title(self._stations, station_ids)
 
     def _already_configured(self, station_ids: list[int]) -> list[int]:
         """Return selected station IDs that are already configured."""
@@ -209,7 +205,7 @@ class VedurIsOptionsFlow(config_entries.OptionsFlow):
                 _async_remove_station_registry_entries(self.hass, removed_ids)
                 self.hass.config_entries.async_update_entry(
                     self._config_entry,
-                    title=_entry_title(self._stations, selected_ids),
+                    title=ENTRY_TITLE,
                     data=entry_data,
                     options=entry_data,
                 )
@@ -266,19 +262,6 @@ def _select_schema(
                 default=default_enable_person_weather,
             ): selector.BooleanSelector(),
         }
-    )
-
-
-def _entry_title(stations: dict[int, Station], station_ids: list[int]) -> str:
-    """Return a human-friendly config entry title."""
-    station_names = [stations[station_id].name for station_id in station_ids]
-    if not station_names:
-        return "Vedur.is: Home"
-    if len(station_names) <= 2:
-        return "Vedur.is: " + ", ".join(station_names)
-    return (
-        f"Vedur.is: {station_names[0]}, {station_names[1]} "
-        f"+{len(station_names) - 2}"
     )
 
 

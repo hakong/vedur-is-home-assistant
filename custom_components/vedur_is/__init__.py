@@ -9,6 +9,7 @@ from .const import (
     CONF_ENABLE_PERSON_WEATHER,
     CONF_STATION_IDS,
     DOMAIN,
+    ENTRY_TITLE,
     PLATFORMS,
     SENSOR_KEYS,
 )
@@ -22,6 +23,10 @@ async def async_setup_entry(hass: Any, entry: Any) -> bool:
 
     from .api import VedurIsApiClient
     from .coordinator import VedurIsDataUpdateCoordinator
+
+    if entry.title != ENTRY_TITLE:
+        _LOGGER.debug("Normalizing Vedur.is config entry title")
+        hass.config_entries.async_update_entry(entry, title=ENTRY_TITLE)
 
     if entry.options.get(CONF_STATION_IDS) and entry.options != entry.data:
         _LOGGER.debug("Promoting Vedur.is options to config entry data")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 DOMAIN = "vedur_is"
+ENTRY_TITLE = "Vedur.is"
 
 PLATFORMS: list[str] = ["sensor", "weather"]
 
