@@ -1,0 +1,78 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Add Vedur.is stations",
+        "description": "Could not load the station list."
+      },
+      "select": {
+        "title": "Select stations",
+        "description": "Choose one or more active stations to create weather entities for. Individual metric sensors are available as disabled diagnostic entities.",
+        "data": {
+          "station_ids": "Stations",
+          "enable_person_weather": "Create weather entities for people"
+        }
+      }
+    },
+    "error": {
+      "already_configured": "One or more selected stations are already configured.",
+      "cannot_connect": "Could not connect to vedur.is.",
+      "invalid_response": "vedur.is returned an unexpected response.",
+      "no_selection": "Select at least one station.",
+      "no_stations": "No active automatic stations matched the search."
+    },
+    "abort": {
+      "already_configured": "These stations are already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Manage Vedur.is stations",
+        "description": "Could not load the station list."
+      },
+      "select": {
+        "title": "Select stations",
+        "description": "Choose the full station list for this integration entry. Individual metric sensors are available as disabled diagnostic entities.",
+        "data": {
+          "station_ids": "Stations",
+          "enable_person_weather": "Create weather entities for people"
+        }
+      }
+    },
+    "error": {
+      "already_configured": "One or more selected stations are already configured in another entry.",
+      "cannot_connect": "Could not connect to vedur.is.",
+      "invalid_response": "vedur.is returned an unexpected response.",
+      "no_selection": "Select at least one station."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "temperature": {
+        "name": "Temperature"
+      },
+      "humidity": {
+        "name": "Humidity"
+      },
+      "dew_point": {
+        "name": "Dew point"
+      },
+      "wind_speed": {
+        "name": "Wind speed"
+      },
+      "wind_gust": {
+        "name": "Wind gust"
+      },
+      "wind_direction": {
+        "name": "Wind direction"
+      },
+      "pressure": {
+        "name": "Pressure"
+      },
+      "precipitation": {
+        "name": "Precipitation"
+      }
+    }
+  }
+}

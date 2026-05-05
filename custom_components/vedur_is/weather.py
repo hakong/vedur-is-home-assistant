@@ -1,0 +1,631 @@
+"""Person-following weather platform for the Vedur.is integration."""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any
+
+from homeassistant.components.weather import (
+    Forecast,
+    SingleCoordinatorWeatherEntity,
+    WeatherEntity,
+    WeatherEntityFeature,
+)
+from homeassistant.const import UnitOfPressure, UnitOfSpeed, UnitOfTemperature
+from homeassistant.core import Event, HomeAssistant, State, callback
+from homeassistant.helpers import aiohttp_client
+from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_track_state_change_event
+
+from .api import (
+    ForecastPoint,
+    Observation,
+    Station,
+    StationForecast,
+    VedurIsApiClient,
+)
+from .const import (
+    ATTR_FORECAST_STATION_DISTANCE_KM,
+    ATTR_FORECAST_STATION_ID,
+    ATTR_FORECAST_STATION_NAME,
+    ATTR_OBSERVATION_STATION_DISTANCE_KM,
+    ATTR_OBSERVATION_STATION_ID,
+    ATTR_OBSERVATION_STATION_NAME,
+    ATTR_OBSERVATION_TIME,
+    ATTR_STATION_ID,
+    CONF_ENABLE_PERSON_WEATHER,
+    CONF_STATION_IDS,
+    CONF_STATIONS,
+    DOMAIN,
+)
+from .geo import Coordinate, nearest_station, resolve_person_coordinate
+from .forecast_utils import (
+    daily_forecast_dicts,
+    hourly_forecast_dicts,
+    twice_daily_forecast_dicts,
+)
+from .weather_coordinator import VedurIsWeatherDataUpdateCoordinator
+from .weather_utils import condition_from_forecast_text, condition_from_observation
+
+MAX_OBSERVATION_DISTANCE_KM = 150.0
+FORECAST_FEATURES = (
+    WeatherEntityFeature.FORECAST_DAILY
+    | WeatherEntityFeature.FORECAST_HOURLY
+    | WeatherEntityFeature.FORECAST_TWICE_DAILY
+)
+
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: Any,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up person-following Vedur.is weather entities."""
+    client = VedurIsApiClient(aiohttp_client.async_get_clientsession(hass))
+    coordinator = VedurIsWeatherDataUpdateCoordinator(hass, client, entry)
+    await coordinator.async_config_entry_first_refresh()
+
+    entry_config = entry.options or entry.data
+    stations: dict[int, Station] = {}
+    for station_data in entry_config.get(CONF_STATIONS, []):
+        station = Station.from_api(station_data)
+        stations[station.station_id] = station
+
+    entities: list[WeatherEntity] = []
+    if _should_create_home_weather(hass, entry):
+        entities.append(VedurIsHomeWeatherEntity(coordinator))
+    if _should_create_person_weather(hass, entry):
+        entities.extend(
+            VedurIsPersonWeatherEntity(coordinator, person_entity_id)
+            for person_entity_id in hass.states.async_entity_ids("person")
+        )
+    entities.extend(
+        VedurIsStationWeatherEntity(
+            coordinator,
+            stations.get(station_id)
+            or coordinator.data.stations.get(station_id)
+            or Station(
+                station_id=station_id,
+                name=str(station_id),
+                abbr=None,
+                station_type="sj",
+                latitude=None,
+                longitude=None,
+                elevation=None,
+                owner=None,
+                start_year=None,
+            ),
+        )
+        for station_id in (
+            int(station_id) for station_id in entry_config.get(CONF_STATION_IDS, [])
+        )
+    )
+    async_add_entities(entities)
+
+
+class VedurIsPersonWeatherEntity(
+    SingleCoordinatorWeatherEntity[VedurIsWeatherDataUpdateCoordinator],
+    WeatherEntity,
+):
+    """Weather entity that follows one Home Assistant person."""
+
+    _attr_has_entity_name = False
+    _attr_native_precipitation_unit = "mm"
+    _attr_native_pressure_unit = UnitOfPressure.HPA
+    _attr_native_temperature_unit = UnitOfTemperature.CELSIUS
+    _attr_native_wind_speed_unit = UnitOfSpeed.METERS_PER_SECOND
+    _attr_supported_features = FORECAST_FEATURES
+
+    def __init__(
+        self,
+        coordinator: VedurIsWeatherDataUpdateCoordinator,
+        person_entity_id: str,
+    ) -> None:
+        """Initialize the weather entity."""
+        super().__init__(coordinator)
+        self._person_entity_id = person_entity_id
+        self._attr_unique_id = f"{DOMAIN}_{person_entity_id}_weather"
+        self._attr_name = _person_name(coordinator.hass.states.get(person_entity_id))
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to person state changes."""
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            async_track_state_change_event(
+                self.hass,
+                [self._person_entity_id],
+                self._async_person_state_changed,
+            )
+        )
+
+    @callback
+    def _async_person_state_changed(self, event: Event[State | None]) -> None:
+        """Write a new weather state when the tracked person moves."""
+        self.async_write_ha_state()
+        self.hass.async_create_task(self.async_update_listeners(None))
+
+    @property
+    def available(self) -> bool:
+        """Return if weather data is available for the person's location."""
+        observation_result = self._nearest_observation_station
+        return (
+            super().available
+            and self._person_coordinate is not None
+            and observation_result is not None
+            and observation_result[1] <= MAX_OBSERVATION_DISTANCE_KM
+            and self._observation is not None
+        )
+
+    @property
+    def condition(self) -> str | None:
+        """Return the current weather condition."""
+        forecast_point = self._current_forecast_point
+        if forecast_point is not None:
+            return condition_from_forecast_text(
+                forecast_point.weather_text,
+                forecast_point.time,
+            )
+
+        observation = self._observation
+        if observation is not None:
+            return condition_from_observation(observation)
+        return None
+
+    @property
+    def native_temperature(self) -> float | None:
+        """Return the temperature in Celsius."""
+        return self._observation_value("t")
+
+    @property
+    def humidity(self) -> float | None:
+        """Return the relative humidity percentage."""
+        return self._observation_value("rh")
+
+    @property
+    def native_dew_point(self) -> float | None:
+        """Return the dew point in Celsius."""
+        return self._observation_value("td")
+
+    @property
+    def native_wind_speed(self) -> float | None:
+        """Return the wind speed in meters per second."""
+        return self._observation_value("f")
+
+    @property
+    def native_wind_gust_speed(self) -> float | None:
+        """Return the wind gust speed in meters per second."""
+        return self._observation_value("fg")
+
+    @property
+    def wind_bearing(self) -> float | str | None:
+        """Return the wind bearing."""
+        observation = self._observation
+        if observation is None:
+            return None
+        return observation.value("d")
+
+    @property
+    def native_pressure(self) -> float | None:
+        """Return the pressure in hPa."""
+        return self._observation_value("p")
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return station metadata for the current person location."""
+        observation_station = self._nearest_observation_station
+        forecast_station = self._nearest_forecast_station
+
+        attrs: dict[str, Any] = {"person_entity_id": self._person_entity_id}
+        if observation_station is not None:
+            station, station_distance = observation_station
+            attrs.update(
+                {
+                    ATTR_OBSERVATION_STATION_ID: station.station_id,
+                    ATTR_OBSERVATION_STATION_NAME: station.name,
+                    ATTR_OBSERVATION_STATION_DISTANCE_KM: round(
+                        station_distance,
+                        2,
+                    ),
+                }
+            )
+
+        if forecast_station is not None:
+            station, station_distance = forecast_station
+            attrs.update(
+                {
+                    ATTR_FORECAST_STATION_ID: station.station_id,
+                    ATTR_FORECAST_STATION_NAME: station.name,
+                    ATTR_FORECAST_STATION_DISTANCE_KM: round(station_distance, 2),
+                }
+            )
+
+        precipitation = self._observation_value("r")
+        if precipitation is not None:
+            attrs["precipitation"] = precipitation
+
+        return attrs
+
+    async def async_forecast_hourly(self) -> list[Forecast] | None:
+        """Return hourly forecasts for the person's nearest forecast station."""
+        station_forecast = self._forecast
+        if station_forecast is None:
+            return []
+
+        return _ha_forecasts(hourly_forecast_dicts(station_forecast.forecasts))
+
+    async def async_forecast_daily(self) -> list[Forecast] | None:
+        """Return daily forecasts for the person's nearest forecast station."""
+        station_forecast = self._forecast
+        if station_forecast is None:
+            return []
+
+        return _ha_forecasts(daily_forecast_dicts(station_forecast.forecasts))
+
+    async def async_forecast_twice_daily(self) -> list[Forecast] | None:
+        """Return twice-daily forecasts for the nearest forecast station."""
+        station_forecast = self._forecast
+        if station_forecast is None:
+            return []
+
+        return _ha_forecasts(twice_daily_forecast_dicts(station_forecast.forecasts))
+
+    @property
+    def _forecast(self) -> StationForecast | None:
+        """Return the XML forecast for the nearest forecast station."""
+        station_result = self._nearest_forecast_station
+        if station_result is None or self.coordinator.data is None:
+            return None
+
+        station = station_result[0]
+        return self.coordinator.data.forecasts.get(station.station_id)
+
+    @property
+    def _person_coordinate(self) -> Coordinate | None:
+        """Return the current person coordinate, if known."""
+        state = self.hass.states.get(self._person_entity_id)
+        if state is None:
+            return None
+
+        return resolve_person_coordinate(
+            state.state,
+            state.attributes,
+            _zones_by_name(self.hass),
+        )
+
+    @property
+    def _nearest_observation_station(self) -> tuple[Station, float] | None:
+        """Return the nearest station with a current observation."""
+        if self.coordinator.data is None or self._person_coordinate is None:
+            return None
+
+        stations = (
+            self.coordinator.data.stations[station_id]
+            for station_id in self.coordinator.data.observations
+            if station_id in self.coordinator.data.stations
+        )
+        return nearest_station(self._person_coordinate, stations)
+
+    @property
+    def _nearest_forecast_station(self) -> tuple[Station, float] | None:
+        """Return the nearest station with XML forecast data."""
+        if self.coordinator.data is None or self._person_coordinate is None:
+            return None
+
+        stations = (
+            self.coordinator.data.stations[station_id]
+            for station_id in self.coordinator.data.forecasts
+            if station_id in self.coordinator.data.stations
+        )
+        return nearest_station(self._person_coordinate, stations)
+
+    @property
+    def _observation(self) -> Observation | None:
+        """Return the observation for the nearest observation station."""
+        station_result = self._nearest_observation_station
+        if station_result is None or self.coordinator.data is None:
+            return None
+
+        return self.coordinator.data.observations.get(station_result[0].station_id)
+
+    @property
+    def _current_forecast_point(self) -> ForecastPoint | None:
+        """Return the current or next forecast point for this person."""
+        station_result = self._nearest_forecast_station
+        if station_result is None or self.coordinator.data is None:
+            return None
+
+        station_forecast = self._forecast
+        if station_forecast is None:
+            return None
+
+        now = datetime.now()
+        for forecast in station_forecast.forecasts:
+            if forecast.time >= now:
+                return forecast
+        return station_forecast.forecasts[-1]
+
+    def _observation_value(self, key: str) -> float | None:
+        """Return a numeric observation value."""
+        observation = self._observation
+        if observation is None:
+            return None
+
+        value = observation.value(key)
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+
+class VedurIsHomeWeatherEntity(VedurIsPersonWeatherEntity):
+    """Weather entity that follows the Home Assistant home zone."""
+
+    def __init__(
+        self,
+        coordinator: VedurIsWeatherDataUpdateCoordinator,
+    ) -> None:
+        """Initialize the home weather entity."""
+        super().__init__(coordinator, "zone.home")
+        self._attr_unique_id = f"{DOMAIN}_home_weather"
+        self._attr_name = "Home"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return station metadata for the current home location."""
+        attrs = super().extra_state_attributes
+        attrs.pop("person_entity_id", None)
+        attrs["zone_entity_id"] = self._person_entity_id
+        return attrs
+
+
+class VedurIsStationWeatherEntity(
+    SingleCoordinatorWeatherEntity[VedurIsWeatherDataUpdateCoordinator],
+    WeatherEntity,
+):
+    """Weather entity for one configured Vedur.is station."""
+
+    _attr_has_entity_name = False
+    _attr_native_precipitation_unit = "mm"
+    _attr_native_pressure_unit = UnitOfPressure.HPA
+    _attr_native_temperature_unit = UnitOfTemperature.CELSIUS
+    _attr_native_wind_speed_unit = UnitOfSpeed.METERS_PER_SECOND
+    _attr_supported_features = FORECAST_FEATURES
+
+    def __init__(
+        self,
+        coordinator: VedurIsWeatherDataUpdateCoordinator,
+        station: Station,
+    ) -> None:
+        """Initialize the station weather entity."""
+        super().__init__(coordinator)
+        self._station = station
+        self._attr_unique_id = f"{DOMAIN}_{station.station_id}_weather"
+        self._attr_name = station.name
+        self._attr_device_info = self._device_info(station)
+
+    @property
+    def available(self) -> bool:
+        """Return if weather data is available for the station."""
+        return super().available and self._observation is not None
+
+    @property
+    def condition(self) -> str | None:
+        """Return the current weather condition."""
+        forecast_point = self._current_forecast_point
+        if forecast_point is not None:
+            return condition_from_forecast_text(
+                forecast_point.weather_text,
+                forecast_point.time,
+            )
+
+        observation = self._observation
+        if observation is not None:
+            return condition_from_observation(observation)
+        return None
+
+    @property
+    def native_temperature(self) -> float | None:
+        """Return the temperature in Celsius."""
+        return self._observation_value("t")
+
+    @property
+    def humidity(self) -> float | None:
+        """Return the relative humidity percentage."""
+        return self._observation_value("rh")
+
+    @property
+    def native_dew_point(self) -> float | None:
+        """Return the dew point in Celsius."""
+        return self._observation_value("td")
+
+    @property
+    def native_wind_speed(self) -> float | None:
+        """Return the wind speed in meters per second."""
+        return self._observation_value("f")
+
+    @property
+    def native_wind_gust_speed(self) -> float | None:
+        """Return the wind gust speed in meters per second."""
+        return self._observation_value("fg")
+
+    @property
+    def wind_bearing(self) -> float | str | None:
+        """Return the wind bearing."""
+        observation = self._observation
+        if observation is None:
+            return None
+        return observation.value("d")
+
+    @property
+    def native_pressure(self) -> float | None:
+        """Return the pressure in hPa."""
+        return self._observation_value("p")
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return station metadata for the station weather entity."""
+        observation = self._observation
+        attrs: dict[str, Any] = {
+            ATTR_STATION_ID: self._station.station_id,
+            ATTR_OBSERVATION_STATION_ID: self._station.station_id,
+            ATTR_OBSERVATION_STATION_NAME: self._station.name,
+        }
+
+        station_forecast = self._station_forecast
+        if station_forecast is not None:
+            attrs.update(
+                {
+                    ATTR_FORECAST_STATION_ID: self._station.station_id,
+                    ATTR_FORECAST_STATION_NAME: station_forecast.name,
+                }
+            )
+
+        if observation and observation.time:
+            attrs[ATTR_OBSERVATION_TIME] = observation.time.isoformat()
+
+        precipitation = self._observation_value("r")
+        if precipitation is not None:
+            attrs["precipitation"] = precipitation
+
+        return attrs
+
+    async def async_forecast_hourly(self) -> list[Forecast] | None:
+        """Return hourly forecasts for the station."""
+        station_forecast = self._station_forecast
+        if station_forecast is None:
+            return []
+
+        return _ha_forecasts(hourly_forecast_dicts(station_forecast.forecasts))
+
+    async def async_forecast_daily(self) -> list[Forecast] | None:
+        """Return daily forecasts for the station."""
+        station_forecast = self._station_forecast
+        if station_forecast is None:
+            return []
+
+        return _ha_forecasts(daily_forecast_dicts(station_forecast.forecasts))
+
+    async def async_forecast_twice_daily(self) -> list[Forecast] | None:
+        """Return twice-daily forecasts for the station."""
+        station_forecast = self._station_forecast
+        if station_forecast is None:
+            return []
+
+        return _ha_forecasts(twice_daily_forecast_dicts(station_forecast.forecasts))
+
+    @property
+    def _observation(self) -> Observation | None:
+        """Return the observation for this station."""
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.observations.get(self._station.station_id)
+
+    @property
+    def _station_forecast(self) -> StationForecast | None:
+        """Return the XML forecast for this station."""
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.forecasts.get(self._station.station_id)
+
+    @property
+    def _current_forecast_point(self) -> ForecastPoint | None:
+        """Return the current or next forecast point for this station."""
+        station_forecast = self._station_forecast
+        if station_forecast is None:
+            return None
+
+        now = datetime.now()
+        for forecast in station_forecast.forecasts:
+            if forecast.time >= now:
+                return forecast
+        return station_forecast.forecasts[-1]
+
+    def _observation_value(self, key: str) -> float | None:
+        """Return a numeric observation value."""
+        observation = self._observation
+        if observation is None:
+            return None
+
+        value = observation.value(key)
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _device_info(self, station: Station) -> DeviceInfo:
+        """Return device registry metadata."""
+        info: DeviceInfo = {
+            "identifiers": {(DOMAIN, str(station.station_id))},
+            "name": station.name,
+            "manufacturer": station.owner or "Icelandic Met Office",
+            "model": "Automatic weather station",
+        }
+
+        if station.abbr:
+            info["configuration_url"] = (
+                f"https://en.vedur.is/weather/stations/?s={station.abbr}"
+            )
+
+        return info
+
+
+def _person_name(state: State | None) -> str:
+    if state is None:
+        return "Person"
+    return state.name or state.entity_id.removeprefix("person.").replace("_", " ")
+
+
+def _should_create_person_weather(hass: HomeAssistant, entry: Any) -> bool:
+    """Return if this entry owns global person-following weather entities."""
+    enabled_entries = [
+        config_entry
+        for config_entry in hass.config_entries.async_entries(DOMAIN)
+        if (config_entry.options or config_entry.data).get(
+            CONF_ENABLE_PERSON_WEATHER,
+            True,
+        )
+    ]
+    return bool(enabled_entries and enabled_entries[0].entry_id == entry.entry_id)
+
+
+def _should_create_home_weather(hass: HomeAssistant, entry: Any) -> bool:
+    """Return if this entry owns the global home weather entity."""
+    entries = hass.config_entries.async_entries(DOMAIN)
+    return bool(entries and entries[0].entry_id == entry.entry_id)
+
+
+def _ha_forecasts(forecasts: list[dict[str, Any]]) -> list[Forecast]:
+    """Return Home Assistant Forecast objects from plain forecast dictionaries."""
+    return [Forecast(**forecast) for forecast in forecasts]
+
+
+def _zones_by_name(hass: HomeAssistant) -> dict[str, Coordinate]:
+    zones: dict[str, Coordinate] = {}
+    for state in hass.states.async_all("zone"):
+        coordinate = _coordinate_from_state(state)
+        if coordinate is None:
+            continue
+
+        object_id = state.entity_id.removeprefix("zone.")
+        for key in (state.state, state.name, object_id, state.entity_id):
+            if key:
+                zones[key.casefold()] = coordinate
+
+    return zones
+
+
+def _coordinate_from_state(state: State) -> Coordinate | None:
+    latitude = state.attributes.get("latitude")
+    longitude = state.attributes.get("longitude")
+    if latitude is None or longitude is None:
+        return None
+
+    try:
+        return Coordinate(float(latitude), float(longitude))
+    except (TypeError, ValueError):
+        return None

@@ -1,0 +1,29 @@
+[project]
+name = "vedur-is-home-assistant"
+version = "0.1.0"
+description = "Home Assistant custom integration for vedur.is current weather observations"
+requires-python = ">=3.12"
+dependencies = [
+  "aiohttp>=3.9"
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8.0",
+  "pytest-asyncio>=1.0"
+]
+homeassistant = [
+  "homeassistant>=2026.1.0"
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+include = ["custom_components.vedur_is*"]
+namespaces = true
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
