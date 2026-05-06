@@ -6,17 +6,17 @@ Future ideas and follow-up work for the Vedur.is Home Assistant integration.
 
 - Add a Home Assistant brand/icon asset so the integration page does not show
   the placeholder icon.
-- Add clearer station forecast metadata in the UI/docs, especially when a
-  station uses a nearby forecast-capable station for forecasts.
 - Add a configurable warning threshold for forecast station distance, so users
   can see when forecasts may be less local than observations.
-- Add observation completeness diagnostics, such as which current observation
-  fields came from the official API, the gottvedur.is fallback, or are still
-  unavailable.
-- Add more current weather attributes when they are reliable, such as
-  visibility and cloud cover.
-- Improve condition mapping from Vedur.is forecast text, including more
-  Icelandic Met Office wording variants.
+- Add more current weather attributes only after confirming which source fields
+  are stable and consistently populated. Candidate fields include visibility
+  (`v`) and cloud cover (`n`), but these should not be exposed as first-class
+  weather attributes until their units, meanings, and fallback behavior are
+  verified across several station types.
+- Keep condition mapping current as new Vedur.is/XML forecast text variants
+  appear. The English and Icelandic XML `W` phrases observed on May 6, 2026 are
+  mapped; future work should focus on newly observed `exceptional` phrases and
+  on SYNOP/current-condition text if the integration starts consuming that data.
 - Add better documentation examples for dashboard badges, person-following
   weather, station weather, and `weather.get_forecasts`.
 - Add a Home Assistant diagnostics download for config entry debug data without
@@ -24,12 +24,8 @@ Future ideas and follow-up work for the Vedur.is Home Assistant integration.
 
 ## Configuration Ideas
 
-- Add options for whether Home weather, person-following weather, and selected
-  station weather entities are enabled.
 - Add a configurable maximum distance for Home/person observation stations.
 - Add a configurable maximum distance for Home/person forecast stations.
-- Add a station selection hint or attribute that indicates whether a selected
-  station has direct XML forecast support.
 - Consider optional grouping or labels for station weather entities when the
   nearest forecast station differs from the selected observation station.
 
@@ -47,8 +43,6 @@ Future ideas and follow-up work for the Vedur.is Home Assistant integration.
 
 ## Forecast Improvements
 
-- Review whether daily and twice-daily forecasts should be derived differently
-  from the hourly XML data.
 - Add tests around stations without direct XML forecasts using a nearby
   forecast-capable station.
 - Add tests for forecast distance and fallback metadata.
@@ -58,6 +52,5 @@ Future ideas and follow-up work for the Vedur.is Home Assistant integration.
 ## Release Polish
 
 - Add HACS release notes/changelog.
-- Add repository topics and a concise public project description.
 - Add more screenshots to the README once the UI settles.
 - Add CI for linting and tests.
