@@ -39,18 +39,36 @@ class TestWeatherUtils(unittest.TestCase):
     """Tests for weather condition mapping."""
 
     def test_forecast_condition_mapping(self) -> None:
-        """Common Vedur forecast texts map to Home Assistant conditions."""
+        """Known Vedur XML forecast texts map to Home Assistant conditions."""
         cases = {
             "Clear sky": CONDITION_SUNNY,
+            "Heiðskírt": CONDITION_SUNNY,
             "Partly cloudy": CONDITION_PARTLY_CLOUDY,
+            "Léttskýjað": CONDITION_PARTLY_CLOUDY,
             "Cloudy": CONDITION_CLOUDY,
+            "Skýjað": CONDITION_CLOUDY,
             "Overcast": CONDITION_CLOUDY,
+            "Alskýjað": CONDITION_CLOUDY,
             "Light rain": CONDITION_RAINY,
+            "Lítils háttar rigning": CONDITION_RAINY,
+            "Rain": CONDITION_RAINY,
+            "Rigning": CONDITION_RAINY,
             "Rain showers": CONDITION_RAINY,
-            "Heavy rain": CONDITION_POURING,
+            "Skúrir": CONDITION_RAINY,
+            "Light snow": CONDITION_SNOWY,
+            "Lítils háttar snjókoma": CONDITION_SNOWY,
             "Snow showers": CONDITION_SNOWY,
+            "Snjóél": CONDITION_SNOWY,
+            "Snow": CONDITION_SNOWY,
+            "Snjókoma": CONDITION_SNOWY,
+            "Light sleet": CONDITION_SNOWY_RAINY,
+            "Lítils háttar slydda": CONDITION_SNOWY_RAINY,
             "Sleet": CONDITION_SNOWY_RAINY,
+            "Slydda": CONDITION_SNOWY_RAINY,
+            "Sleet showers": CONDITION_SNOWY_RAINY,
+            "Slydduél": CONDITION_SNOWY_RAINY,
             "Fog": CONDITION_FOG,
+            "Heavy rain": CONDITION_POURING,
             "Something unexpected": CONDITION_EXCEPTIONAL,
         }
 

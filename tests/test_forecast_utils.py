@@ -44,7 +44,7 @@ class TestForecastUtils(unittest.TestCase):
 
     def test_hourly_forecast_dicts(self) -> None:
         """Hourly forecast dictionaries preserve each XML point."""
-        forecasts = hourly_forecast_dicts(POINTS[:1])
+        forecasts = hourly_forecast_dicts(POINTS[:1], now=datetime(2026, 5, 5, 0, 30))
 
         self.assertEqual(forecasts[0]["datetime"], "2026-05-05T00:00:00")
         self.assertEqual(forecasts[0]["condition"], "clear-night")
@@ -52,8 +52,8 @@ class TestForecastUtils(unittest.TestCase):
         self.assertEqual(forecasts[0]["native_wind_speed"], 2)
 
     def test_daily_forecast_dicts(self) -> None:
-        """Daily forecast dictionaries include high, low, and midday condition."""
-        forecasts = daily_forecast_dicts(POINTS)
+        """Daily forecast dictionaries include high, low, and period condition."""
+        forecasts = daily_forecast_dicts(POINTS, now=datetime(2026, 5, 5, 0, 30))
 
         self.assertEqual(len(forecasts), 2)
         self.assertEqual(forecasts[0]["datetime"], "2026-05-05T00:00:00")
@@ -65,11 +65,33 @@ class TestForecastUtils(unittest.TestCase):
 
     def test_twice_daily_forecast_dicts(self) -> None:
         """Twice-daily forecast dictionaries include required is_daytime flag."""
-        forecasts = twice_daily_forecast_dicts(POINTS)
+        forecasts = twice_daily_forecast_dicts(
+            POINTS,
+            now=datetime(2026, 5, 5, 0, 30),
+        )
 
         self.assertEqual(forecasts[0]["datetime"], "2026-05-04T18:00:00")
         self.assertFalse(forecasts[0]["is_daytime"])
         self.assertEqual(forecasts[1]["datetime"], "2026-05-05T06:00:00")
         self.assertTrue(forecasts[1]["is_daytime"])
         self.assertEqual(forecasts[1]["condition"], "rainy")
+        self.assertEqual(forecasts[1]["native_temperature"], 7)
         self.assertEqual(forecasts[1]["native_templow"], 2)
+
+    def test_hourly_forecast_dicts_filter_past_points(self) -> None:
+        """Hourly forecasts do not return points older than the current hour."""
+        forecasts = hourly_forecast_dicts(POINTS, now=datetime(2026, 5, 5, 7, 15))
+
+        self.assertEqual(forecasts[0]["datetime"], "2026-05-05T12:00:00")
+
+    def test_daily_condition_uses_significant_period_weather(self) -> None:
+        """Daily condition is not limited to the nearest midday forecast point."""
+        points = (
+            _point("2026-05-05T06:00:00", 2, 3, "NE", "Cloudy"),
+            _point("2026-05-05T12:00:00", 6, 4, "E", "Cloudy"),
+            _point("2026-05-05T18:00:00", 4, 5, "SE", "Heavy rain"),
+        )
+
+        forecasts = daily_forecast_dicts(points, now=datetime(2026, 5, 5, 0, 0))
+
+        self.assertEqual(forecasts[0]["condition"], "pouring")

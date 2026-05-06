@@ -7,12 +7,42 @@ from datetime import datetime, time, timedelta
 from typing import Any
 
 from .api import ForecastPoint
-from .weather_utils import condition_from_forecast_text
+from .weather_utils import (
+    CONDITION_CLEAR_NIGHT,
+    CONDITION_CLOUDY,
+    CONDITION_EXCEPTIONAL,
+    CONDITION_FOG,
+    CONDITION_PARTLY_CLOUDY,
+    CONDITION_POURING,
+    CONDITION_RAINY,
+    CONDITION_SNOWY,
+    CONDITION_SNOWY_RAINY,
+    CONDITION_SUNNY,
+    CONDITION_WINDY,
+    condition_from_forecast_text,
+)
 
 ForecastDict = dict[str, Any]
 
+_CONDITION_PRIORITY = {
+    CONDITION_POURING: 90,
+    CONDITION_SNOWY_RAINY: 85,
+    CONDITION_SNOWY: 80,
+    CONDITION_RAINY: 70,
+    CONDITION_FOG: 60,
+    CONDITION_WINDY: 50,
+    CONDITION_CLOUDY: 40,
+    CONDITION_PARTLY_CLOUDY: 30,
+    CONDITION_SUNNY: 20,
+    CONDITION_CLEAR_NIGHT: 20,
+    CONDITION_EXCEPTIONAL: 10,
+}
 
-def hourly_forecast_dicts(points: Iterable[ForecastPoint]) -> list[ForecastDict]:
+
+def hourly_forecast_dicts(
+    points: Iterable[ForecastPoint],
+    now: datetime | None = None,
+) -> list[ForecastDict]:
     """Return Home Assistant hourly forecast dictionaries."""
     return [
         {
@@ -25,21 +55,25 @@ def hourly_forecast_dicts(points: Iterable[ForecastPoint]) -> list[ForecastDict]
             "native_wind_speed": forecast.wind_speed,
             "wind_bearing": forecast.wind_bearing,
         }
-        for forecast in points
+        for forecast in _future_points(points, now)
     ]
 
 
-def daily_forecast_dicts(points: Iterable[ForecastPoint]) -> list[ForecastDict]:
+def daily_forecast_dicts(
+    points: Iterable[ForecastPoint],
+    now: datetime | None = None,
+) -> list[ForecastDict]:
     """Aggregate Vedur XML time points into daily forecast dictionaries."""
     groups: dict[datetime, list[ForecastPoint]] = {}
-    for point in points:
+    for point in _future_points(points, now):
         day_start = datetime.combine(point.time.date(), time.min)
         groups.setdefault(day_start, []).append(point)
 
     forecasts: list[ForecastDict] = []
     for day_start in sorted(groups):
         day_points = sorted(groups[day_start], key=lambda point: point.time)
-        representative = _closest_to(day_points, day_start.replace(hour=12))
+        target = day_start.replace(hour=12)
+        representative = _most_significant_condition_point(day_points, target)
         windy = _max_by(day_points, "wind_speed")
 
         forecast: ForecastDict = {
@@ -60,10 +94,13 @@ def daily_forecast_dicts(points: Iterable[ForecastPoint]) -> list[ForecastDict]:
     return forecasts
 
 
-def twice_daily_forecast_dicts(points: Iterable[ForecastPoint]) -> list[ForecastDict]:
+def twice_daily_forecast_dicts(
+    points: Iterable[ForecastPoint],
+    now: datetime | None = None,
+) -> list[ForecastDict]:
     """Aggregate Vedur XML time points into day/night forecast dictionaries."""
     groups: dict[tuple[datetime, bool], list[ForecastPoint]] = {}
-    for point in points:
+    for point in _future_points(points, now):
         segment_start, is_daytime = _segment_start(point.time)
         groups.setdefault((segment_start, is_daytime), []).append(point)
 
@@ -73,10 +110,8 @@ def twice_daily_forecast_dicts(points: Iterable[ForecastPoint]) -> list[Forecast
             groups[(segment_start, is_daytime)],
             key=lambda point: point.time,
         )
-        representative = _closest_to(
-            segment_points,
-            segment_start + timedelta(hours=6),
-        )
+        target = segment_start + timedelta(hours=6)
+        representative = _most_significant_condition_point(segment_points, target)
         windy = _max_by(segment_points, "wind_speed")
 
         forecast: ForecastDict = {
@@ -87,9 +122,8 @@ def twice_daily_forecast_dicts(points: Iterable[ForecastPoint]) -> list[Forecast
             ),
             "is_daytime": is_daytime,
         }
-        if representative.temperature is not None:
-            forecast["native_temperature"] = representative.temperature
         if temperatures := _values(segment_points, "temperature"):
+            forecast["native_temperature"] = max(temperatures)
             forecast["native_templow"] = min(temperatures)
         if windy is not None:
             forecast["native_wind_speed"] = windy.wind_speed
@@ -97,6 +131,21 @@ def twice_daily_forecast_dicts(points: Iterable[ForecastPoint]) -> list[Forecast
         forecasts.append(forecast)
 
     return forecasts
+
+
+def _future_points(
+    points: Iterable[ForecastPoint],
+    now: datetime | None,
+) -> list[ForecastPoint]:
+    cutoff = _forecast_cutoff(now or datetime.now())
+    return sorted(
+        (point for point in points if point.time >= cutoff),
+        key=lambda point: point.time,
+    )
+
+
+def _forecast_cutoff(value: datetime) -> datetime:
+    return value.replace(minute=0, second=0, microsecond=0)
 
 
 def _segment_start(forecast_time: datetime) -> tuple[datetime, bool]:
@@ -108,8 +157,24 @@ def _segment_start(forecast_time: datetime) -> tuple[datetime, bool]:
     return day_start.replace(hour=18), False
 
 
-def _closest_to(points: list[ForecastPoint], target: datetime) -> ForecastPoint:
-    return min(points, key=lambda point: abs(point.time - target))
+def _most_significant_condition_point(
+    points: list[ForecastPoint],
+    target: datetime,
+) -> ForecastPoint:
+    return max(
+        points,
+        key=lambda point: (
+            _condition_priority(point),
+            -abs(point.time - target).total_seconds(),
+        ),
+    )
+
+
+def _condition_priority(point: ForecastPoint) -> int:
+    return _CONDITION_PRIORITY.get(
+        condition_from_forecast_text(point.weather_text, point.time),
+        0,
+    )
 
 
 def _max_by(points: list[ForecastPoint], attr: str) -> ForecastPoint | None:
