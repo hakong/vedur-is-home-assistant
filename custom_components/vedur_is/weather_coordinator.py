@@ -19,7 +19,9 @@ from .api import (
     VedurIsApiClient,
 )
 from .const import (
+    CONF_ENABLE_HOME_WEATHER,
     CONF_ENABLE_PERSON_WEATHER,
+    CONF_ENABLE_STATION_WEATHER,
     CONF_STATION_IDS,
     DEFAULT_SCAN_INTERVAL_MINUTES,
     DOMAIN,
@@ -100,18 +102,21 @@ class VedurIsWeatherDataUpdateCoordinator(DataUpdateCoordinator[VedurIsWeatherDa
     ) -> set[int]:
         """Return station ids that should receive gottvedur.is fallback data."""
         entry_config = self.config_entry.options or self.config_entry.data
-        station_ids = {
-            int(station_id)
-            for station_id in entry_config.get(CONF_STATION_IDS, [])
-        }
+        station_ids = set()
+        if entry_config.get(CONF_ENABLE_STATION_WEATHER, True):
+            station_ids.update(
+                int(station_id)
+                for station_id in entry_config.get(CONF_STATION_IDS, [])
+            )
         aws_stations = [
             stations_by_id[station_id]
             for station_id in aws_station_ids
             if station_id in stations_by_id
         ]
-        home_station_id = self._nearest_home_station_id(aws_stations)
-        if home_station_id is not None:
-            station_ids.add(home_station_id)
+        if entry_config.get(CONF_ENABLE_HOME_WEATHER, True):
+            home_station_id = self._nearest_home_station_id(aws_stations)
+            if home_station_id is not None:
+                station_ids.add(home_station_id)
 
         if not entry_config.get(CONF_ENABLE_PERSON_WEATHER, True):
             return station_ids

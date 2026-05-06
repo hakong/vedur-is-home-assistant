@@ -1,6 +1,6 @@
 {
   "domain": "vedur_is",
-  "name": "Vedur.is",
+  "name": "Icelandic Met Office Weather",
   "codeowners": ["@hakongi"],
   "config_flow": true,
   "documentation": "https://github.com/hakongi/vedur-is-home-assistant",

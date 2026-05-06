@@ -1,4 +1,4 @@
-"""Person-following weather platform for the Vedur.is integration."""
+"""Weather platform for the Icelandic Met Office Weather integration."""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from homeassistant.helpers.event import async_track_state_change_event
 
 from .api import (
     ForecastPoint,
+    OBSERVATION_SOURCE_UNAVAILABLE,
     Observation,
     Station,
     StationForecast,
@@ -29,15 +30,23 @@ from .const import (
     ATTR_FORECAST_STATION_DISTANCE_KM,
     ATTR_FORECAST_STATION_ID,
     ATTR_FORECAST_STATION_NAME,
+    ATTR_FORECAST_USES_NEARBY_STATION,
     ATTR_OBSERVATION_STATION_DISTANCE_KM,
     ATTR_OBSERVATION_STATION_ID,
     ATTR_OBSERVATION_STATION_NAME,
     ATTR_OBSERVATION_TIME,
+    ATTR_OBSERVATION_UNAVAILABLE_FIELDS,
+    ATTR_OBSERVATION_VALUE_SOURCES,
     ATTR_STATION_ID,
+    ATTR_STATION_HAS_DIRECT_FORECAST,
+    ATTRIBUTION,
+    CONF_ENABLE_HOME_WEATHER,
     CONF_ENABLE_PERSON_WEATHER,
+    CONF_ENABLE_STATION_WEATHER,
     CONF_STATION_IDS,
     CONF_STATIONS,
     DOMAIN,
+    SENSOR_KEYS,
 )
 from .geo import Coordinate, nearest_station, resolve_person_coordinate
 from .forecast_utils import (
@@ -80,27 +89,29 @@ async def async_setup_entry(
             VedurIsPersonWeatherEntity(coordinator, person_entity_id)
             for person_entity_id in hass.states.async_entity_ids("person")
         )
-    entities.extend(
-        VedurIsStationWeatherEntity(
-            coordinator,
-            stations.get(station_id)
-            or coordinator.data.stations.get(station_id)
-            or Station(
-                station_id=station_id,
-                name=str(station_id),
-                abbr=None,
-                station_type="sj",
-                latitude=None,
-                longitude=None,
-                elevation=None,
-                owner=None,
-                start_year=None,
-            ),
+    if entry_config.get(CONF_ENABLE_STATION_WEATHER, True):
+        entities.extend(
+            VedurIsStationWeatherEntity(
+                coordinator,
+                stations.get(station_id)
+                or coordinator.data.stations.get(station_id)
+                or Station(
+                    station_id=station_id,
+                    name=str(station_id),
+                    abbr=None,
+                    station_type="sj",
+                    latitude=None,
+                    longitude=None,
+                    elevation=None,
+                    owner=None,
+                    start_year=None,
+                ),
+            )
+            for station_id in (
+                int(station_id)
+                for station_id in entry_config.get(CONF_STATION_IDS, [])
+            )
         )
-        for station_id in (
-            int(station_id) for station_id in entry_config.get(CONF_STATION_IDS, [])
-        )
-    )
     async_add_entities(entities)
 
 
@@ -116,6 +127,7 @@ class VedurIsPersonWeatherEntity(
     _attr_native_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_native_wind_speed_unit = UnitOfSpeed.METERS_PER_SECOND
     _attr_supported_features = FORECAST_FEATURES
+    _attr_attribution = ATTRIBUTION
 
     def __init__(
         self,
@@ -248,6 +260,7 @@ class VedurIsPersonWeatherEntity(
         if precipitation is not None:
             attrs["precipitation"] = precipitation
 
+        attrs.update(_observation_diagnostics(self._observation))
         return attrs
 
     async def async_forecast_hourly(self) -> list[Forecast] | None:
@@ -416,6 +429,7 @@ class VedurIsStationWeatherEntity(
     _attr_native_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_native_wind_speed_unit = UnitOfSpeed.METERS_PER_SECOND
     _attr_supported_features = FORECAST_FEATURES
+    _attr_attribution = ATTRIBUTION
 
     def __init__(
         self,
@@ -516,6 +530,12 @@ class VedurIsStationWeatherEntity(
         if precipitation is not None:
             attrs["precipitation"] = precipitation
 
+        attrs[ATTR_STATION_HAS_DIRECT_FORECAST] = self._has_direct_forecast
+        attrs[ATTR_FORECAST_USES_NEARBY_STATION] = (
+            forecast_result is not None
+            and forecast_result[0].station_id != self._station.station_id
+        )
+        attrs.update(_observation_diagnostics(observation))
         return attrs
 
     async def async_forecast_hourly(self) -> list[Forecast] | None:
@@ -574,6 +594,14 @@ class VedurIsStationWeatherEntity(
             if station_id in self.coordinator.data.stations
         )
         return nearest_station(station_coordinate, stations)
+
+    @property
+    def _has_direct_forecast(self) -> bool:
+        """Return whether the selected station has direct XML forecast data."""
+        return (
+            self.coordinator.data is not None
+            and self._station.station_id in self.coordinator.data.forecasts
+        )
 
     @property
     def _current_forecast_point(self) -> ForecastPoint | None:
@@ -640,8 +668,29 @@ def _should_create_person_weather(hass: HomeAssistant, entry: Any) -> bool:
 
 def _should_create_home_weather(hass: HomeAssistant, entry: Any) -> bool:
     """Return if this entry owns the global home weather entity."""
+    entry_config = entry.options or entry.data
+    if not entry_config.get(CONF_ENABLE_HOME_WEATHER, True):
+        return False
+
     entries = hass.config_entries.async_entries(DOMAIN)
     return bool(entries and entries[0].entry_id == entry.entry_id)
+
+
+def _observation_diagnostics(observation: Observation | None) -> dict[str, Any]:
+    """Return compact observation source diagnostics."""
+    if observation is None:
+        sources = {key: OBSERVATION_SOURCE_UNAVAILABLE for key in SENSOR_KEYS}
+    else:
+        sources = {key: observation.value_source(key) for key in SENSOR_KEYS}
+
+    return {
+        ATTR_OBSERVATION_VALUE_SOURCES: sources,
+        ATTR_OBSERVATION_UNAVAILABLE_FIELDS: [
+            key
+            for key, source in sources.items()
+            if source == OBSERVATION_SOURCE_UNAVAILABLE
+        ],
+    }
 
 
 def _ha_forecasts(forecasts: list[dict[str, Any]]) -> list[Forecast]:

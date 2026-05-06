@@ -2,22 +2,24 @@
   "config": {
     "step": {
       "user": {
-        "title": "Add Vedur.is stations",
+        "title": "Set up Icelandic Met Office Weather",
         "description": "Could not load the station list."
       },
       "select": {
         "title": "Select stations",
-        "description": "The integration always creates weather for Home. Optionally choose active stations to create additional weather entities. Individual metric sensors are available as disabled diagnostic entities.",
+        "description": "Choose which weather entities to create. Selected stations can also expose disabled-by-default diagnostic metric sensors.",
         "data": {
           "station_ids": "Stations",
-          "enable_person_weather": "Create weather entities for people"
+          "enable_home_weather": "Create weather for Home",
+          "enable_person_weather": "Create weather for people",
+          "enable_station_weather": "Create entities for selected stations"
         }
       }
     },
     "error": {
       "already_configured": "One or more selected stations are already configured.",
       "cannot_connect": "Could not connect to vedur.is.",
-      "invalid_response": "vedur.is returned an unexpected response.",
+      "invalid_response": "The Icelandic Met Office weather API returned an unexpected response.",
       "no_stations": "No active automatic stations matched the search."
     },
     "abort": {
@@ -27,22 +29,24 @@
   "options": {
     "step": {
       "init": {
-        "title": "Manage Vedur.is stations",
+        "title": "Manage Icelandic Met Office Weather",
         "description": "Could not load the station list."
       },
       "select": {
         "title": "Select stations",
-        "description": "Weather for Home is always created. Optionally choose active stations to create additional weather entities. Individual metric sensors are available as disabled diagnostic entities.",
+        "description": "Choose which weather entities to create. Selected stations can also expose disabled-by-default diagnostic metric sensors.",
         "data": {
           "station_ids": "Stations",
-          "enable_person_weather": "Create weather entities for people"
+          "enable_home_weather": "Create weather for Home",
+          "enable_person_weather": "Create weather for people",
+          "enable_station_weather": "Create entities for selected stations"
         }
       }
     },
     "error": {
       "already_configured": "One or more selected stations are already configured in another entry.",
       "cannot_connect": "Could not connect to vedur.is.",
-      "invalid_response": "vedur.is returned an unexpected response."
+      "invalid_response": "The Icelandic Met Office weather API returned an unexpected response."
     }
   },
   "entity": {

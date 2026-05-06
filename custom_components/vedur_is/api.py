@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 import logging
 import re
@@ -21,6 +21,10 @@ FORECAST_ID_CHUNK_SIZE = 80
 GOTTVEDUR_FALLBACK_CONCURRENCY = 8
 
 _LOGGER = logging.getLogger(__name__)
+
+OBSERVATION_SOURCE_OFFICIAL_API = "official_api"
+OBSERVATION_SOURCE_GOTTVEDUR_IS = "gottvedur_is"
+OBSERVATION_SOURCE_UNAVAILABLE = "unavailable"
 
 _GOTTVEDUR_OBSERVATION_FIELD_MAP = {
     "temperature": "t",
@@ -104,20 +108,38 @@ class Observation:
     name: str
     time: datetime | None
     values: Mapping[str, Any]
+    value_sources: Mapping[str, str] = field(default_factory=dict)
 
     @classmethod
-    def from_api(cls, data: Mapping[str, Any]) -> "Observation":
+    def from_api(
+        cls,
+        data: Mapping[str, Any],
+        *,
+        value_source: str = OBSERVATION_SOURCE_OFFICIAL_API,
+    ) -> "Observation":
         """Build an observation from an API payload."""
+        values = dict(data)
         return cls(
             station_id=_required_int(data, "station"),
             name=str(data.get("name") or ""),
             time=_parse_datetime(data.get("time")),
-            values=dict(data),
+            values=values,
+            value_sources={
+                key: value_source
+                for key in values
+                if key not in {"station", "name", "time"}
+            },
         )
 
     def value(self, key: str) -> Any:
         """Return a raw observation value."""
         return self.values.get(key)
+
+    def value_source(self, key: str) -> str:
+        """Return where an observation value came from."""
+        if _is_unavailable(self.value(key)):
+            return OBSERVATION_SOURCE_UNAVAILABLE
+        return self.value_sources.get(key, OBSERVATION_SOURCE_OFFICIAL_API)
 
 
 @dataclass(frozen=True, slots=True)
@@ -478,7 +500,7 @@ def parse_gottvedur_observation_payload(payload: Mapping[str, Any]) -> Observati
         if gottvedur_key in latest:
             values[vedur_key] = latest.get(gottvedur_key)
 
-    return Observation.from_api(values)
+    return Observation.from_api(values, value_source=OBSERVATION_SOURCE_GOTTVEDUR_IS)
 
 
 def merge_observation_fallback(
@@ -487,11 +509,15 @@ def merge_observation_fallback(
 ) -> Observation:
     """Return an observation with unavailable primary values filled from fallback."""
     values = dict(primary.values)
+    value_sources = dict(primary.value_sources)
     for key, fallback_value in fallback.values.items():
         if key in {"station", "name", "time"}:
             continue
         if _is_unavailable(values.get(key)) and not _is_unavailable(fallback_value):
             values[key] = fallback_value
+            value_sources[key] = fallback.value_sources.get(
+                key, OBSERVATION_SOURCE_GOTTVEDUR_IS
+            )
 
     name = primary.name or fallback.name
     observation_time = primary.time or fallback.time
@@ -505,6 +531,7 @@ def merge_observation_fallback(
         name=name,
         time=observation_time,
         values=values,
+        value_sources=value_sources,
     )
 
 

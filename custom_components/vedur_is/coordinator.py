@@ -11,6 +11,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .api import CannotConnect, InvalidResponse, Observation, Station, VedurIsApiClient
 from .const import (
+    CONF_ENABLE_STATION_WEATHER,
     CONF_STATION_IDS,
     CONF_STATIONS,
     DEFAULT_SCAN_INTERVAL_MINUTES,
@@ -39,9 +40,11 @@ class VedurIsDataUpdateCoordinator(DataUpdateCoordinator[dict[int, Observation]]
         )
         self.client = client
         entry_config = entry.options or entry.data
-        self.station_ids: list[int] = [
-            int(station_id) for station_id in entry_config[CONF_STATION_IDS]
-        ]
+        self.station_ids: list[int] = []
+        if entry_config.get(CONF_ENABLE_STATION_WEATHER, True):
+            self.station_ids = [
+                int(station_id) for station_id in entry_config[CONF_STATION_IDS]
+            ]
         _LOGGER.debug("Setting up Vedur.is stations: %s", self.station_ids)
         self.stations: dict[int, Station] = {}
 

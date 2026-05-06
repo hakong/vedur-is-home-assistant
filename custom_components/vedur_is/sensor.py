@@ -1,4 +1,4 @@
-"""Sensor platform for the Vedur.is integration."""
+"""Sensor platform for the Icelandic Met Office Weather integration."""
 
 from __future__ import annotations
 
@@ -25,8 +25,14 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .api import Observation, Station
-from .const import ATTR_OBSERVATION_TIME, ATTR_STATION_ID, DOMAIN
+from .api import OBSERVATION_SOURCE_UNAVAILABLE, Observation, Station
+from .const import (
+    ATTR_OBSERVATION_SOURCE,
+    ATTR_OBSERVATION_TIME,
+    ATTR_STATION_ID,
+    ATTRIBUTION,
+    DOMAIN,
+)
 from .coordinator import VedurIsDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -139,6 +145,7 @@ class VedurIsSensor(CoordinatorEntity[VedurIsDataUpdateCoordinator], SensorEntit
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_entity_registry_enabled_default = False
     _attr_has_entity_name = True
+    _attr_attribution = ATTRIBUTION
 
     def __init__(
         self,
@@ -161,7 +168,8 @@ class VedurIsSensor(CoordinatorEntity[VedurIsDataUpdateCoordinator], SensorEntit
             super().available
             and observation is not None
             and self.entity_description.available_fn(observation)
-            and observation.value(self.entity_description.key) is not None
+            and observation.value_source(self.entity_description.key)
+            != OBSERVATION_SOURCE_UNAVAILABLE
         )
 
     @property
@@ -175,12 +183,17 @@ class VedurIsSensor(CoordinatorEntity[VedurIsDataUpdateCoordinator], SensorEntit
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return extra state attributes."""
         observation = self._observation
-        return {
+        attrs = {
             ATTR_STATION_ID: self._station.station_id,
             ATTR_OBSERVATION_TIME: observation.time.isoformat()
             if observation and observation.time
             else None,
         }
+        if observation is not None:
+            attrs[ATTR_OBSERVATION_SOURCE] = observation.value_source(
+                self.entity_description.key
+            )
+        return attrs
 
     @property
     def _observation(self) -> Observation | None:

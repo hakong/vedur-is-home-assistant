@@ -13,6 +13,9 @@ from custom_components.vedur_is.api import (
     CannotConnect,
     GOTTVEDUR_BASE_URL,
     InvalidResponse,
+    OBSERVATION_SOURCE_GOTTVEDUR_IS,
+    OBSERVATION_SOURCE_OFFICIAL_API,
+    OBSERVATION_SOURCE_UNAVAILABLE,
     Observation,
     XML_FORECAST_URL,
     merge_observation_fallback,
@@ -186,7 +189,13 @@ class TestVedurIsApiClient(unittest.TestCase):
         observations = asyncio.run(client.async_get_latest_observations([1470, 3470]))
 
         self.assertEqual(observations[1470].value("t"), 3.9)
+        self.assertEqual(
+            observations[1470].value_source("t"), OBSERVATION_SOURCE_OFFICIAL_API
+        )
         self.assertIsNone(observations[1470].value("fg"))
+        self.assertEqual(
+            observations[1470].value_source("fg"), OBSERVATION_SOURCE_UNAVAILABLE
+        )
         self.assertIsNotNone(observations[1470].time)
         self.assertEqual(
             session.calls,
@@ -256,6 +265,18 @@ class TestVedurIsApiClient(unittest.TestCase):
         self.assertEqual(observations[1474].value("rh"), 59)
         self.assertEqual(observations[1474].value("fg"), 4.7)
         self.assertEqual(observations[1474].value("r"), 0)
+        self.assertEqual(
+            observations[1474].value_source("t"), OBSERVATION_SOURCE_OFFICIAL_API
+        )
+        self.assertEqual(
+            observations[1474].value_source("rh"), OBSERVATION_SOURCE_GOTTVEDUR_IS
+        )
+        self.assertEqual(
+            observations[1474].value_source("fg"), OBSERVATION_SOURCE_GOTTVEDUR_IS
+        )
+        self.assertEqual(
+            observations[1474].value_source("r"), OBSERVATION_SOURCE_GOTTVEDUR_IS
+        )
 
     def test_parse_gottvedur_observation_payload(self) -> None:
         """Gottvedur page data is mapped to official observation keys."""
@@ -291,6 +312,9 @@ class TestVedurIsApiClient(unittest.TestCase):
         self.assertEqual(observation.value("d"), 47)
         self.assertEqual(observation.value("p"), 1025.9)
         self.assertEqual(observation.value("r"), 0)
+        self.assertEqual(
+            observation.value_source("r"), OBSERVATION_SOURCE_GOTTVEDUR_IS
+        )
         self.assertIsNotNone(observation.time)
 
     def test_merge_observation_fallback_only_fills_unavailable_values(self) -> None:
@@ -324,6 +348,8 @@ class TestVedurIsApiClient(unittest.TestCase):
         self.assertEqual(merged.value("rh"), 59)
         self.assertEqual(merged.value("fg"), 4.7)
         self.assertEqual(merged.value("r"), 0)
+        self.assertEqual(merged.value_source("t"), OBSERVATION_SOURCE_OFFICIAL_API)
+        self.assertEqual(merged.value_source("rh"), OBSERVATION_SOURCE_OFFICIAL_API)
         self.assertEqual(merged.name, "Official")
         self.assertEqual(merged.time, primary.time)
 

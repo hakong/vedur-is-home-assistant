@@ -15,7 +15,9 @@ from homeassistant.helpers import entity_registry as er, selector
 
 from .api import CannotConnect, InvalidResponse, Station, VedurIsApiClient
 from .const import (
+    CONF_ENABLE_HOME_WEATHER,
     CONF_ENABLE_PERSON_WEATHER,
+    CONF_ENABLE_STATION_WEATHER,
     CONF_STATION_IDS,
     CONF_STATIONS,
     DOMAIN,
@@ -83,9 +85,12 @@ class VedurIsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     )
                 }
             else:
+                enable_home_weather = user_input.get(CONF_ENABLE_HOME_WEATHER, True)
                 enable_person_weather = user_input.get(
-                    CONF_ENABLE_PERSON_WEATHER,
-                    True,
+                    CONF_ENABLE_PERSON_WEATHER, True
+                )
+                enable_station_weather = user_input.get(
+                    CONF_ENABLE_STATION_WEATHER, True
                 )
                 await self.async_set_unique_id(
                     "stations:"
@@ -101,13 +106,19 @@ class VedurIsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             self._stations[station_id].as_storage_dict()
                             for station_id in selected_ids
                         ],
+                        CONF_ENABLE_HOME_WEATHER: enable_home_weather,
                         CONF_ENABLE_PERSON_WEATHER: enable_person_weather,
+                        CONF_ENABLE_STATION_WEATHER: enable_station_weather,
                     },
                 )
 
         return self.async_show_form(
             step_id="select",
-            data_schema=self._select_schema(enable_person_weather=True),
+            data_schema=self._select_schema(
+                enable_home_weather=True,
+                enable_person_weather=True,
+                enable_station_weather=True,
+            ),
             errors=errors,
         )
 
@@ -116,12 +127,20 @@ class VedurIsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         client = VedurIsApiClient(aiohttp_client.async_get_clientsession(self.hass))
         return await client.async_get_stations()
 
-    def _select_schema(self, *, enable_person_weather: bool) -> vol.Schema:
+    def _select_schema(
+        self,
+        *,
+        enable_home_weather: bool,
+        enable_person_weather: bool,
+        enable_station_weather: bool,
+    ) -> vol.Schema:
         """Return the station selection schema."""
         return _select_schema(
             self._stations,
             default_station_ids=[],
+            default_enable_home_weather=enable_home_weather,
             default_enable_person_weather=enable_person_weather,
+            default_enable_station_weather=enable_station_weather,
         )
 
     def _already_configured(self, station_ids: list[int]) -> list[int]:
@@ -169,16 +188,19 @@ class VedurIsOptionsFlow(config_entries.OptionsFlow):
         """Update the selected stations."""
         errors: dict[str, str] = {}
         current_ids = _configured_station_ids(self._config_entry)
+        enable_home_weather = _enable_home_weather(self._config_entry)
         enable_person_weather = _enable_person_weather(self._config_entry)
+        enable_station_weather = _enable_station_weather(self._config_entry)
 
         if user_input is not None:
             selected_ids = [
                 int(station_id)
                 for station_id in user_input.get(CONF_STATION_IDS, [])
             ]
-            enable_person_weather = user_input.get(
-                CONF_ENABLE_PERSON_WEATHER,
-                True,
+            enable_home_weather = user_input.get(CONF_ENABLE_HOME_WEATHER, True)
+            enable_person_weather = user_input.get(CONF_ENABLE_PERSON_WEATHER, True)
+            enable_station_weather = user_input.get(
+                CONF_ENABLE_STATION_WEATHER, True
             )
 
             if already_configured := _already_configured(
@@ -200,7 +222,9 @@ class VedurIsOptionsFlow(config_entries.OptionsFlow):
                         self._stations[station_id].as_storage_dict()
                         for station_id in selected_ids
                     ],
+                    CONF_ENABLE_HOME_WEATHER: enable_home_weather,
                     CONF_ENABLE_PERSON_WEATHER: enable_person_weather,
+                    CONF_ENABLE_STATION_WEATHER: enable_station_weather,
                 }
                 _async_remove_station_registry_entries(self.hass, removed_ids)
                 self.hass.config_entries.async_update_entry(
@@ -216,7 +240,9 @@ class VedurIsOptionsFlow(config_entries.OptionsFlow):
             data_schema=_select_schema(
                 self._stations,
                 current_ids,
+                default_enable_home_weather=enable_home_weather,
                 default_enable_person_weather=enable_person_weather,
+                default_enable_station_weather=enable_station_weather,
             ),
             errors=errors,
         )
@@ -231,13 +257,15 @@ def _select_schema(
     stations: dict[int, Station],
     default_station_ids: list[int],
     *,
+    default_enable_home_weather: bool,
     default_enable_person_weather: bool,
+    default_enable_station_weather: bool,
 ) -> vol.Schema:
     """Return the station selection schema."""
     options = [
         selector.SelectOptionDict(
             value=str(station.station_id),
-            label=f"{station.name} ({station.station_id})",
+            label=_station_selector_label(station),
         )
         for station in sorted(
             stations.values(),
@@ -258,11 +286,27 @@ def _select_schema(
                 )
             ),
             vol.Optional(
+                CONF_ENABLE_HOME_WEATHER,
+                default=default_enable_home_weather,
+            ): selector.BooleanSelector(),
+            vol.Optional(
                 CONF_ENABLE_PERSON_WEATHER,
                 default=default_enable_person_weather,
             ): selector.BooleanSelector(),
+            vol.Optional(
+                CONF_ENABLE_STATION_WEATHER,
+                default=default_enable_station_weather,
+            ): selector.BooleanSelector(),
         }
     )
+
+
+def _station_selector_label(station: Station) -> str:
+    """Return a human-friendly station selector label."""
+    label = f"{station.name} ({station.station_id})"
+    if station.owner:
+        label = f"{label} - {station.owner}"
+    return label
 
 
 def _already_configured(
@@ -298,6 +342,26 @@ def _enable_person_weather(entry: ConfigEntry) -> bool:
         entry.options.get(
             CONF_ENABLE_PERSON_WEATHER,
             entry.data.get(CONF_ENABLE_PERSON_WEATHER, True),
+        )
+    )
+
+
+def _enable_home_weather(entry: ConfigEntry) -> bool:
+    """Return whether Home weather should be created."""
+    return bool(
+        entry.options.get(
+            CONF_ENABLE_HOME_WEATHER,
+            entry.data.get(CONF_ENABLE_HOME_WEATHER, True),
+        )
+    )
+
+
+def _enable_station_weather(entry: ConfigEntry) -> bool:
+    """Return whether selected station weather entities should be created."""
+    return bool(
+        entry.options.get(
+            CONF_ENABLE_STATION_WEATHER,
+            entry.data.get(CONF_ENABLE_STATION_WEATHER, True),
         )
     )
 
