@@ -34,7 +34,9 @@ Future ideas and follow-up work for the Vedur.is Home Assistant integration.
 - Add Textaspá text forecasts. The Icelandic Met Office recommends that these
   handwritten meteorologist forecasts take priority over automatic forecasts
   when there is a large difference between them.
-- Add weather warnings.
+- Improve weather warnings after the first CAP alert sensor pass. Useful next
+  steps include location-aware Home/person alert matching, optional per-area or
+  per-person alert sensors, and richer dashboard examples.
 - Add earthquake data.
 - Investigate whether gottvedur.is exposes stable public APIs for additional
   current or historical observation values.

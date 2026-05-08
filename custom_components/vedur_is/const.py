@@ -18,7 +18,13 @@ CONF_ENABLE_STATION_WEATHER = "enable_station_weather"
 SENSOR_KEYS = ("t", "rh", "td", "f", "fg", "d", "p", "r")
 
 DEFAULT_SCAN_INTERVAL_MINUTES = 60
+ALERT_SCAN_INTERVAL_MINUTES = 15
 
+ATTR_ALERTS = "alerts"
+ATTR_ALERT_AREAS = "alert_areas"
+ATTR_ALERT_COUNT = "alert_count"
+ATTR_ALERT_HIGHEST_COLOR = "alert_highest_color"
+ATTR_ALERT_HIGHEST_SEVERITY = "alert_highest_severity"
 ATTR_OBSERVATION_TIME = "observation_time"
 ATTR_OBSERVATION_UNAVAILABLE_FIELDS = "observation_unavailable_fields"
 ATTR_OBSERVATION_VALUE_SOURCES = "observation_value_sources"

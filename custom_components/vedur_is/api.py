@@ -10,10 +10,12 @@ import logging
 import re
 from typing import Any
 import xml.etree.ElementTree as ET
+from urllib.parse import quote
 
 import aiohttp
 
 BASE_URL = "https://api.vedur.is/weather"
+CAP_BASE_URL = "https://api.vedur.is/cap/v1/capbroker"
 GOTTVEDUR_BASE_URL = "https://gottvedur.is"
 XML_FORECAST_URL = "https://xmlweather.vedur.is/"
 REQUEST_TIMEOUT_SECONDS = 10
@@ -164,6 +166,59 @@ class StationForecast:
     forecasts: tuple[ForecastPoint, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class WeatherAlert:
+    """One Icelandic Met Office CAP weather alert area."""
+
+    identifier: str
+    sender: str | None
+    sent: datetime | None
+    status: str | None
+    message_type: str | None
+    language: str | None
+    area: str | None
+    polygon: str | None
+    category: str | None
+    certainty: str | None
+    description: str | None
+    event: str | None
+    event_code: str | None
+    headline: str | None
+    onset: datetime | None
+    expires: datetime | None
+    severity: str | None
+    urgency: str | None
+    color: str | None
+    icon_uri: str | None
+    web: str | None
+
+    def as_attribute_dict(self) -> dict[str, Any]:
+        """Return a JSON-serializable Home Assistant attribute payload."""
+        return {
+            "identifier": self.identifier,
+            "sender": self.sender,
+            "sent": self.sent.isoformat() if self.sent else None,
+            "status": self.status,
+            "message_type": self.message_type,
+            "language": self.language,
+            "area": self.area,
+            "polygon": self.polygon,
+            "category": self.category,
+            "certainty": self.certainty,
+            "description": self.description,
+            "event": self.event,
+            "event_code": self.event_code,
+            "headline": self.headline,
+            "onset": self.onset.isoformat() if self.onset else None,
+            "expires": self.expires.isoformat() if self.expires else None,
+            "severity": self.severity,
+            "urgency": self.urgency,
+            "color": self.color,
+            "icon_uri": self.icon_uri,
+            "web": self.web,
+        }
+
+
 class VedurIsApiClient:
     """Small async API client for vedur.is."""
 
@@ -293,6 +348,63 @@ class VedurIsApiClient:
 
         return forecasts
 
+    async def async_get_weather_alerts(
+        self,
+        *,
+        language: str = "en-US",
+    ) -> tuple[WeatherAlert, ...]:
+        """Return active Icelandic Met Office weather alerts."""
+        payload = await self._async_get_json_url(
+            f"{CAP_BASE_URL}/active/category/Met",
+            [],
+        )
+        if payload is None:
+            return ()
+        if not isinstance(payload, list):
+            raise InvalidResponse("Expected CAP alert list")
+
+        async def fetch_alert(item: Mapping[str, Any]) -> tuple[WeatherAlert, ...]:
+            sender = _optional_str(item.get("sender"))
+            identifier = _optional_str(item.get("identifier"))
+            sent = _optional_str(item.get("sent"))
+            if sender is None or identifier is None or sent is None:
+                return ()
+
+            detail_payload = await self._async_get_json_url(
+                _cap_alert_detail_url(sender, identifier, sent),
+                [],
+            )
+            if not isinstance(detail_payload, Mapping):
+                return ()
+            return parse_weather_alert_payload(detail_payload, language=language)
+
+        results = await asyncio.gather(
+            *(
+                fetch_alert(item)
+                for item in payload
+                if isinstance(item, Mapping)
+            ),
+            return_exceptions=True,
+        )
+
+        alerts: list[WeatherAlert] = []
+        for result in results:
+            if isinstance(result, Exception):
+                _LOGGER.debug("Could not fetch CAP weather alert detail: %s", result)
+                continue
+            alerts.extend(result)
+
+        return tuple(
+            sorted(
+                alerts,
+                key=lambda alert: (
+                    alert.onset or datetime.max,
+                    alert.area or "",
+                    alert.identifier,
+                ),
+            )
+        )
+
     async def _async_get_json(
         self, path: str, params: list[tuple[str, str]]
     ) -> Any:
@@ -316,6 +428,8 @@ class VedurIsApiClient:
                     raise InvalidResponse(
                         f"vedur.is returned HTTP {response.status}"
                     )
+                if response.status == 204:
+                    return None
                 return await response.json(content_type=None)
         except TimeoutError as err:
             raise CannotConnect("Timed out connecting to vedur.is") from err
@@ -503,6 +617,67 @@ def parse_gottvedur_observation_payload(payload: Mapping[str, Any]) -> Observati
     return Observation.from_api(values, value_source=OBSERVATION_SOURCE_GOTTVEDUR_IS)
 
 
+def parse_weather_alert_payload(
+    payload: Mapping[str, Any],
+    *,
+    language: str = "en-US",
+) -> tuple[WeatherAlert, ...]:
+    """Parse a CAP alert detail payload."""
+    alert = payload.get("alert")
+    if not isinstance(alert, Mapping):
+        raise InvalidResponse("Missing CAP alert")
+
+    identifier = _optional_str(alert.get("identifier")) or "unknown"
+    infos = alert.get("info")
+    if not isinstance(infos, list):
+        return ()
+
+    preferred_infos = [
+        info
+        for info in infos
+        if isinstance(info, Mapping) and info.get("language") == language
+    ]
+    if not preferred_infos:
+        preferred_infos = [info for info in infos if isinstance(info, Mapping)]
+
+    alerts: list[WeatherAlert] = []
+    for info in preferred_infos:
+        area = info.get("area")
+        if not isinstance(area, Mapping):
+            continue
+
+        alerts.append(
+            WeatherAlert(
+                identifier=identifier,
+                sender=_optional_str(alert.get("sender")),
+                sent=_parse_datetime(alert.get("sent")),
+                status=_optional_str(alert.get("status")),
+                message_type=_optional_str(alert.get("msgType")),
+                language=_optional_str(info.get("language")),
+                area=_optional_str(area.get("areaDesc")),
+                polygon=_optional_str(area.get("polygon")),
+                category=_optional_str(info.get("category")),
+                certainty=_optional_str(info.get("certainty")),
+                description=_optional_str(info.get("description")),
+                event=_optional_str(info.get("event")),
+                event_code=_cap_mapping_value(
+                    info.get("eventCode"),
+                    value_name="alertType",
+                ),
+                headline=_optional_str(info.get("headline")),
+                onset=_parse_datetime(info.get("onset")),
+                expires=_parse_datetime(info.get("expires")),
+                severity=_optional_str(info.get("severity")),
+                urgency=_optional_str(info.get("urgency")),
+                color=_cap_mapping_value(info.get("parameter"), value_name="Color"),
+                icon_uri=_cap_mapping_value(info.get("resource"), key="uri"),
+                web=_optional_str(info.get("web")),
+            )
+        )
+
+    return tuple(alerts)
+
+
 def merge_observation_fallback(
     primary: Observation,
     fallback: Observation,
@@ -537,6 +712,31 @@ def merge_observation_fallback(
 
 def _is_unavailable(value: Any) -> bool:
     return value is None or value == "" or value == "?"
+
+
+def _cap_alert_detail_url(sender: str, identifier: str, sent: str) -> str:
+    return (
+        f"{CAP_BASE_URL}/sender/{sender}/identifier/{identifier}/sent/"
+        f"{quote(sent, safe='')}/json"
+    )
+
+
+def _cap_mapping_value(
+    value: Any,
+    *,
+    key: str = "value",
+    value_name: str | None = None,
+) -> str | None:
+    if isinstance(value, Mapping):
+        if value_name is not None and value.get("valueName") != value_name:
+            return None
+        return _optional_str(value.get(key))
+    if isinstance(value, list):
+        for item in value:
+            result = _cap_mapping_value(item, key=key, value_name=value_name)
+            if result is not None:
+                return result
+    return _optional_str(value)
 
 
 def _required_int(data: Mapping[str, Any], key: str) -> int:

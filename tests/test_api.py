@@ -10,6 +10,7 @@ import aiohttp
 
 from custom_components.vedur_is.api import (
     BASE_URL,
+    CAP_BASE_URL,
     CannotConnect,
     GOTTVEDUR_BASE_URL,
     InvalidResponse,
@@ -21,6 +22,7 @@ from custom_components.vedur_is.api import (
     merge_observation_fallback,
     parse_forecasts_xml,
     parse_gottvedur_observation_payload,
+    parse_weather_alert_payload,
     VedurIsApiClient,
 )
 
@@ -445,3 +447,128 @@ class TestVedurIsApiClient(unittest.TestCase):
         """Malformed XML is treated as an invalid API response."""
         with self.assertRaises(InvalidResponse):
             parse_forecasts_xml("<forecasts>")
+
+    def test_parse_weather_alert_payload_uses_preferred_language(self) -> None:
+        """CAP weather alerts are parsed from the preferred language block."""
+        alerts = parse_weather_alert_payload(
+            {
+                "alert": {
+                    "identifier": "is-IMO-test",
+                    "sender": "IMO-Icelandic_Met_Office",
+                    "sent": "2023-01-18T16:39:32-00:00",
+                    "status": "Actual",
+                    "msgType": "Alert",
+                    "info": [
+                        {
+                            "language": "is-IS",
+                            "event": "Veðurviðvörun: Rok",
+                            "area": {"areaDesc": "Höfuðborgarsvæðið"},
+                        },
+                        {
+                            "language": "en-US",
+                            "area": {
+                                "areaDesc": "Capital Region",
+                                "polygon": "64.2,-22.1 64.0,-22.0",
+                            },
+                            "category": "Met",
+                            "certainty": "Likely",
+                            "description": "Northeast storm expected.",
+                            "event": "Weather Warning: Wind",
+                            "eventCode": [
+                                {
+                                    "valueName": "other",
+                                    "value": "ignore-me",
+                                },
+                                {
+                                    "valueName": "alertType",
+                                    "value": "Wind",
+                                },
+                            ],
+                            "headline": "Wind",
+                            "onset": "2023-01-19T12:00:00-00:00",
+                            "expires": "2023-01-19T18:00:00-00:00",
+                            "severity": "Moderate",
+                            "urgency": "Expected",
+                            "parameter": [
+                                {
+                                    "valueName": "other",
+                                    "value": "ignore-me",
+                                },
+                                {
+                                    "valueName": "Color",
+                                    "value": "Yellow",
+                                },
+                            ],
+                            "resource": {
+                                "uri": "https://cdn.vedur.is/cap/icon.png",
+                            },
+                            "web": "https://en.vedur.is/",
+                        },
+                    ],
+                }
+            }
+        )
+
+        self.assertEqual(len(alerts), 1)
+        alert = alerts[0]
+        self.assertEqual(alert.identifier, "is-IMO-test")
+        self.assertEqual(alert.language, "en-US")
+        self.assertEqual(alert.area, "Capital Region")
+        self.assertEqual(alert.event, "Weather Warning: Wind")
+        self.assertEqual(alert.event_code, "Wind")
+        self.assertEqual(alert.color, "Yellow")
+        self.assertEqual(alert.icon_uri, "https://cdn.vedur.is/cap/icon.png")
+        self.assertIsNotNone(alert.onset)
+        self.assertIsNotNone(alert.expires)
+
+    def test_get_weather_alerts_returns_empty_tuple_for_no_active_alerts(self) -> None:
+        """A CAP 204 response means there are no active weather alerts."""
+        client = VedurIsApiClient(
+            FakeSession(None, status=204)
+        )  # type: ignore[arg-type]
+
+        alerts = asyncio.run(client.async_get_weather_alerts())
+
+        self.assertEqual(alerts, ())
+
+    def test_get_weather_alerts_fetches_alert_details(self) -> None:
+        """The active CAP list is expanded into detail alert objects."""
+        detail_url = (
+            f"{CAP_BASE_URL}/sender/IMO-Icelandic_Met_Office/identifier/"
+            "is-IMO-test/sent/2023-01-18T16%3A39%3A32-00%3A00/json"
+        )
+        session = RouteSession(
+            {
+                f"{CAP_BASE_URL}/active/category/Met": [
+                    {
+                        "identifier": "is-IMO-test",
+                        "sender": "IMO-Icelandic_Met_Office",
+                        "sent": "2023-01-18T16:39:32-00:00",
+                    }
+                ],
+                detail_url: {
+                    "alert": {
+                        "identifier": "is-IMO-test",
+                        "sender": "IMO-Icelandic_Met_Office",
+                        "sent": "2023-01-18T16:39:32-00:00",
+                        "info": [
+                            {
+                                "language": "en-US",
+                                "area": {"areaDesc": "Eastfjords"},
+                                "event": "Weather Warning: Extreme thawing",
+                                "headline": "Extreme thawing",
+                                "severity": "Moderate",
+                                "parameter": {"value": "Yellow"},
+                            }
+                        ],
+                    }
+                },
+            }
+        )
+        client = VedurIsApiClient(session)  # type: ignore[arg-type]
+
+        alerts = asyncio.run(client.async_get_weather_alerts())
+
+        self.assertEqual(len(alerts), 1)
+        self.assertEqual(alerts[0].area, "Eastfjords")
+        self.assertEqual(alerts[0].headline, "Extreme thawing")

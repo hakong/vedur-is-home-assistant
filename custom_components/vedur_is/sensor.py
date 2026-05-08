@@ -25,8 +25,20 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .api import OBSERVATION_SOURCE_UNAVAILABLE, Observation, Station
+from .alerts_coordinator import VedurIsAlertsDataUpdateCoordinator
+from .api import (
+    OBSERVATION_SOURCE_UNAVAILABLE,
+    Observation,
+    Station,
+    VedurIsApiClient,
+    WeatherAlert,
+)
 from .const import (
+    ATTR_ALERT_AREAS,
+    ATTR_ALERT_COUNT,
+    ATTR_ALERT_HIGHEST_COLOR,
+    ATTR_ALERT_HIGHEST_SEVERITY,
+    ATTR_ALERTS,
     ATTR_OBSERVATION_SOURCE,
     ATTR_OBSERVATION_TIME,
     ATTR_STATION_ID,
@@ -110,9 +122,17 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Vedur.is sensors from a config entry."""
-    coordinator: VedurIsDataUpdateCoordinator = entry.runtime_data
+    from homeassistant.helpers import aiohttp_client
 
-    entities: list[VedurIsSensor] = []
+    coordinator: VedurIsDataUpdateCoordinator = entry.runtime_data
+    alerts_coordinator = VedurIsAlertsDataUpdateCoordinator(
+        hass,
+        VedurIsApiClient(aiohttp_client.async_get_clientsession(hass)),
+        entry,
+    )
+    await alerts_coordinator.async_refresh()
+
+    entities: list[SensorEntity] = [VedurIsWeatherAlertsSensor(alerts_coordinator)]
     for station_id in coordinator.station_ids:
         station = coordinator.stations.get(station_id) or Station(
             station_id=station_id,
@@ -136,6 +156,51 @@ async def async_setup_entry(
         len(entities),
     )
     async_add_entities(entities)
+
+
+class VedurIsWeatherAlertsSensor(
+    CoordinatorEntity[VedurIsAlertsDataUpdateCoordinator],
+    SensorEntity,
+):
+    """Representation of active Icelandic Met Office weather alerts."""
+
+    _attr_has_entity_name = False
+    _attr_name = "Weather alerts"
+    _attr_translation_key = "weather_alerts"
+    _attr_unique_id = f"{DOMAIN}_weather_alerts"
+    _attr_attribution = ATTRIBUTION
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the active alert count."""
+        if self.coordinator.data is None:
+            return None
+        return len(self.coordinator.data)
+
+    @property
+    def icon(self) -> str:
+        """Return a warning icon when active alerts exist."""
+        if self.native_value:
+            return "mdi:alert"
+        return "mdi:shield-check"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return active weather alert details."""
+        alerts = self.coordinator.data or ()
+        return {
+            ATTR_ALERT_COUNT: len(alerts),
+            ATTR_ALERT_HIGHEST_COLOR: _highest_alert_color(alerts),
+            ATTR_ALERT_HIGHEST_SEVERITY: _highest_alert_severity(alerts),
+            ATTR_ALERT_AREAS: sorted(
+                {
+                    alert.area
+                    for alert in alerts
+                    if alert.area is not None
+                }
+            ),
+            ATTR_ALERTS: [alert.as_attribute_dict() for alert in alerts],
+        }
 
 
 class VedurIsSensor(CoordinatorEntity[VedurIsDataUpdateCoordinator], SensorEntity):
@@ -217,3 +282,45 @@ class VedurIsSensor(CoordinatorEntity[VedurIsDataUpdateCoordinator], SensorEntit
             )
 
         return info
+
+
+_ALERT_COLOR_RANK = {
+    "yellow": 1,
+    "orange": 2,
+    "red": 3,
+}
+
+_ALERT_SEVERITY_RANK = {
+    "minor": 1,
+    "moderate": 2,
+    "severe": 3,
+    "extreme": 4,
+}
+
+
+def _highest_alert_color(alerts: tuple[WeatherAlert, ...]) -> str | None:
+    return _highest_ranked_value(
+        (alert.color for alert in alerts),
+        _ALERT_COLOR_RANK,
+    )
+
+
+def _highest_alert_severity(alerts: tuple[WeatherAlert, ...]) -> str | None:
+    return _highest_ranked_value(
+        (alert.severity for alert in alerts),
+        _ALERT_SEVERITY_RANK,
+    )
+
+
+def _highest_ranked_value(
+    values: Any,
+    ranks: dict[str, int],
+) -> str | None:
+    ranked_values = [
+        value
+        for value in values
+        if isinstance(value, str) and value.casefold() in ranks
+    ]
+    if not ranked_values:
+        return None
+    return max(ranked_values, key=lambda value: ranks[value.casefold()])

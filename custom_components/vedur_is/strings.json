@@ -74,6 +74,9 @@
       },
       "precipitation": {
         "name": "Precipitation"
+      },
+      "weather_alerts": {
+        "name": "Weather alerts"
       }
     }
   }

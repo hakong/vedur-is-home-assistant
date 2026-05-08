@@ -29,6 +29,7 @@ Weather data is provided by the Icelandic Met Office (vedur.is).
 - Station metadata is used for Home Assistant device registry entries.
 - Weather entities expose observation source diagnostics and forecast station
   metadata.
+- Weather alerts sensor for active Icelandic Met Office CAP weather warnings.
 - No API key required.
 
 ## Installation
@@ -88,6 +89,16 @@ Station weather entities also expose forecast metadata:
   `forecast_station_distance_km`: the forecast station actually used by
   `weather.get_forecasts`.
 
+## Current Conditions
+
+Weather entity numeric values such as temperature, humidity, dew point, wind,
+pressure, and precipitation come from current automatic station observations.
+The Home Assistant condition state, such as `sunny`, `partlycloudy`, `rainy`,
+or `clear-night`, comes from the nearest XML forecast time point rather than
+from the observation API. The observation API does not currently provide a
+single current-condition text field equivalent to Home Assistant's weather
+condition state.
+
 ## API Endpoints Used
 
 - `GET https://api.vedur.is/weather/stations?active=true&station_type=sj`
@@ -95,6 +106,42 @@ Station weather entities also expose forecast metadata:
 - `GET https://xmlweather.vedur.is/?op_w=xml&type=forec&lang=en&view=xml&ids=<ids>`
 - `GET https://gottvedur.is/_next/data/.../en/vedur/athuganir/<station>.json`
   as a fallback for missing current observation values.
+- `GET https://api.vedur.is/cap/v1/capbroker/active/category/Met` plus alert
+  detail payloads for active weather warnings.
+
+## API Examples
+
+Fetch the latest basic hourly automatic weather observation for station `1470`
+(`Reykjavík`):
+
+```bash
+curl -L "https://api.vedur.is/weather/observations/aws/hour/latest?parameters=basic&station_id=1470"
+```
+
+Pretty-print the same response:
+
+```bash
+curl -L "https://api.vedur.is/weather/observations/aws/hour/latest?parameters=basic&station_id=1470" \
+  | python3 -m json.tool
+```
+
+Fetch parameter metadata for the latest hourly observation endpoint:
+
+```bash
+curl -L "https://api.vedur.is/weather/parameters?url=/observations/aws/hour/latest&locale=en" \
+  | python3 -m json.tool
+```
+
+In the `basic` response, useful current-weather fields include `t`
+temperature, `rh` humidity, `td` dew point, `f` wind speed, `fg` wind gust, `d`
+wind direction, `p` pressure, and `r` precipitation.
+
+## Weather Alerts
+
+The integration creates a `sensor.weather_alerts` entity. Its state is the
+number of active Icelandic Met Office weather warning areas. Attributes include
+the highest warning color and severity, affected areas, and a list of alert
+details with headline, description, timing, links, and CAP polygon data.
 
 ## Diagnostic Sensors
 
