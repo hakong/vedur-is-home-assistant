@@ -15,6 +15,8 @@ from homeassistant.helpers import entity_registry as er, selector
 
 from .api import CannotConnect, InvalidResponse, Station, VedurIsApiClient
 from .const import (
+    CONF_DEVICE_TRACKER_ENTITY_IDS,
+    CONF_ENABLE_DEVICE_TRACKER_WEATHER,
     CONF_ENABLE_HOME_WEATHER,
     CONF_ENABLE_PERSON_WEATHER,
     CONF_ENABLE_STATION_WEATHER,
@@ -86,11 +88,19 @@ class VedurIsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 }
             else:
                 enable_home_weather = user_input.get(CONF_ENABLE_HOME_WEATHER, True)
+                enable_device_tracker_weather = user_input.get(
+                    CONF_ENABLE_DEVICE_TRACKER_WEATHER,
+                    True,
+                )
                 enable_person_weather = user_input.get(
                     CONF_ENABLE_PERSON_WEATHER, True
                 )
                 enable_station_weather = user_input.get(
                     CONF_ENABLE_STATION_WEATHER, True
+                )
+                device_tracker_entity_ids = user_input.get(
+                    CONF_DEVICE_TRACKER_ENTITY_IDS,
+                    [],
                 )
                 await self.async_set_unique_id(
                     "stations:"
@@ -106,6 +116,10 @@ class VedurIsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             self._stations[station_id].as_storage_dict()
                             for station_id in selected_ids
                         ],
+                        CONF_DEVICE_TRACKER_ENTITY_IDS: device_tracker_entity_ids,
+                        CONF_ENABLE_DEVICE_TRACKER_WEATHER: (
+                            enable_device_tracker_weather
+                        ),
                         CONF_ENABLE_HOME_WEATHER: enable_home_weather,
                         CONF_ENABLE_PERSON_WEATHER: enable_person_weather,
                         CONF_ENABLE_STATION_WEATHER: enable_station_weather,
@@ -115,6 +129,8 @@ class VedurIsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="select",
             data_schema=self._select_schema(
+                device_tracker_entity_ids=[],
+                enable_device_tracker_weather=True,
                 enable_home_weather=True,
                 enable_person_weather=True,
                 enable_station_weather=True,
@@ -130,6 +146,8 @@ class VedurIsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def _select_schema(
         self,
         *,
+        device_tracker_entity_ids: list[str],
+        enable_device_tracker_weather: bool,
         enable_home_weather: bool,
         enable_person_weather: bool,
         enable_station_weather: bool,
@@ -138,6 +156,8 @@ class VedurIsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return _select_schema(
             self._stations,
             default_station_ids=[],
+            default_device_tracker_entity_ids=device_tracker_entity_ids,
+            default_enable_device_tracker_weather=enable_device_tracker_weather,
             default_enable_home_weather=enable_home_weather,
             default_enable_person_weather=enable_person_weather,
             default_enable_station_weather=enable_station_weather,
@@ -188,6 +208,12 @@ class VedurIsOptionsFlow(config_entries.OptionsFlow):
         """Update the selected stations."""
         errors: dict[str, str] = {}
         current_ids = _configured_station_ids(self._config_entry)
+        current_device_tracker_entity_ids = _configured_device_tracker_entity_ids(
+            self._config_entry
+        )
+        enable_device_tracker_weather = _enable_device_tracker_weather(
+            self._config_entry
+        )
         enable_home_weather = _enable_home_weather(self._config_entry)
         enable_person_weather = _enable_person_weather(self._config_entry)
         enable_station_weather = _enable_station_weather(self._config_entry)
@@ -198,9 +224,17 @@ class VedurIsOptionsFlow(config_entries.OptionsFlow):
                 for station_id in user_input.get(CONF_STATION_IDS, [])
             ]
             enable_home_weather = user_input.get(CONF_ENABLE_HOME_WEATHER, True)
+            enable_device_tracker_weather = user_input.get(
+                CONF_ENABLE_DEVICE_TRACKER_WEATHER,
+                True,
+            )
             enable_person_weather = user_input.get(CONF_ENABLE_PERSON_WEATHER, True)
             enable_station_weather = user_input.get(
                 CONF_ENABLE_STATION_WEATHER, True
+            )
+            device_tracker_entity_ids = user_input.get(
+                CONF_DEVICE_TRACKER_ENTITY_IDS,
+                [],
             )
 
             if already_configured := _already_configured(
@@ -216,17 +250,29 @@ class VedurIsOptionsFlow(config_entries.OptionsFlow):
                 }
             else:
                 removed_ids = sorted(set(current_ids) - set(selected_ids))
+                removed_device_tracker_entity_ids = sorted(
+                    set(current_device_tracker_entity_ids)
+                    - set(device_tracker_entity_ids)
+                )
                 entry_data = {
                     CONF_STATION_IDS: selected_ids,
                     CONF_STATIONS: [
                         self._stations[station_id].as_storage_dict()
                         for station_id in selected_ids
                     ],
+                    CONF_DEVICE_TRACKER_ENTITY_IDS: device_tracker_entity_ids,
+                    CONF_ENABLE_DEVICE_TRACKER_WEATHER: (
+                        enable_device_tracker_weather
+                    ),
                     CONF_ENABLE_HOME_WEATHER: enable_home_weather,
                     CONF_ENABLE_PERSON_WEATHER: enable_person_weather,
                     CONF_ENABLE_STATION_WEATHER: enable_station_weather,
                 }
                 _async_remove_station_registry_entries(self.hass, removed_ids)
+                _async_remove_device_tracker_registry_entries(
+                    self.hass,
+                    removed_device_tracker_entity_ids,
+                )
                 self.hass.config_entries.async_update_entry(
                     self._config_entry,
                     title=ENTRY_TITLE,
@@ -240,6 +286,8 @@ class VedurIsOptionsFlow(config_entries.OptionsFlow):
             data_schema=_select_schema(
                 self._stations,
                 current_ids,
+                default_device_tracker_entity_ids=current_device_tracker_entity_ids,
+                default_enable_device_tracker_weather=enable_device_tracker_weather,
                 default_enable_home_weather=enable_home_weather,
                 default_enable_person_weather=enable_person_weather,
                 default_enable_station_weather=enable_station_weather,
@@ -257,6 +305,8 @@ def _select_schema(
     stations: dict[int, Station],
     default_station_ids: list[int],
     *,
+    default_device_tracker_entity_ids: list[str],
+    default_enable_device_tracker_weather: bool,
     default_enable_home_weather: bool,
     default_enable_person_weather: bool,
     default_enable_station_weather: bool,
@@ -285,6 +335,19 @@ def _select_schema(
                     mode=selector.SelectSelectorMode.DROPDOWN,
                 )
             ),
+            vol.Optional(
+                CONF_DEVICE_TRACKER_ENTITY_IDS,
+                default=default_device_tracker_entity_ids,
+            ): selector.EntitySelector(
+                selector.EntitySelectorConfig(
+                    domain="device_tracker",
+                    multiple=True,
+                )
+            ),
+            vol.Optional(
+                CONF_ENABLE_DEVICE_TRACKER_WEATHER,
+                default=default_enable_device_tracker_weather,
+            ): selector.BooleanSelector(),
             vol.Optional(
                 CONF_ENABLE_HOME_WEATHER,
                 default=default_enable_home_weather,
@@ -334,6 +397,26 @@ def _configured_station_ids(entry: ConfigEntry) -> list[int]:
         entry.data.get(CONF_STATION_IDS, []),
     )
     return [int(station_id) for station_id in station_ids]
+
+
+def _configured_device_tracker_entity_ids(entry: ConfigEntry) -> list[str]:
+    """Return configured device tracker entity IDs from entry options or data."""
+    return list(
+        entry.options.get(
+            CONF_DEVICE_TRACKER_ENTITY_IDS,
+            entry.data.get(CONF_DEVICE_TRACKER_ENTITY_IDS, []),
+        )
+    )
+
+
+def _enable_device_tracker_weather(entry: ConfigEntry) -> bool:
+    """Return whether selected device tracker weather should be created."""
+    return bool(
+        entry.options.get(
+            CONF_ENABLE_DEVICE_TRACKER_WEATHER,
+            entry.data.get(CONF_ENABLE_DEVICE_TRACKER_WEATHER, True),
+        )
+    )
 
 
 def _enable_person_weather(entry: ConfigEntry) -> bool:
@@ -410,6 +493,33 @@ def _async_remove_station_registry_entries(
 
         device = device_registry.async_get_device(
             identifiers={(DOMAIN, station_id_str)}
+        )
+        if device:
+            device_registry.async_remove_device(device.id)
+
+
+def _async_remove_device_tracker_registry_entries(
+    hass: HomeAssistant,
+    tracker_entity_ids: list[str],
+) -> None:
+    """Remove entity and device registry entries for removed device trackers."""
+    entity_registry = er.async_get(hass)
+    device_registry = dr.async_get(hass)
+
+    from homeassistant.components.weather import DOMAIN as WEATHER_DOMAIN
+
+    for tracker_entity_id in tracker_entity_ids:
+        unique_id = f"{DOMAIN}_{tracker_entity_id}_weather"
+        entity_id = entity_registry.async_get_entity_id(
+            WEATHER_DOMAIN,
+            DOMAIN,
+            unique_id,
+        )
+        if entity_id:
+            entity_registry.async_remove(entity_id)
+
+        device = device_registry.async_get_device(
+            identifiers={(DOMAIN, f"device_tracker_weather:{tracker_entity_id}")}
         )
         if device:
             device_registry.async_remove_device(device.id)

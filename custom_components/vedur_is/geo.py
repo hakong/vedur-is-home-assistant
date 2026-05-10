@@ -73,6 +73,11 @@ def resolve_person_coordinate(
     return zones.get(state.casefold())
 
 
+def resolve_tracker_coordinate(attributes: Mapping[str, Any]) -> Coordinate | None:
+    """Resolve a device tracker location from direct attributes only."""
+    return _coordinate_from_mapping(attributes)
+
+
 def _coordinate_from_mapping(values: Mapping[str, Any]) -> Coordinate | None:
     latitude = values.get("latitude")
     longitude = values.get("longitude")

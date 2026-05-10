@@ -19,6 +19,8 @@ from .api import (
     VedurIsApiClient,
 )
 from .const import (
+    CONF_DEVICE_TRACKER_ENTITY_IDS,
+    CONF_ENABLE_DEVICE_TRACKER_WEATHER,
     CONF_ENABLE_HOME_WEATHER,
     CONF_ENABLE_PERSON_WEATHER,
     CONF_ENABLE_STATION_WEATHER,
@@ -26,7 +28,12 @@ from .const import (
     DEFAULT_SCAN_INTERVAL_MINUTES,
     DOMAIN,
 )
-from .geo import Coordinate, nearest_station, resolve_person_coordinate
+from .geo import (
+    Coordinate,
+    nearest_station,
+    resolve_person_coordinate,
+    resolve_tracker_coordinate,
+)
 
 _LOGGER = logging.getLogger(__name__)
 MAX_FALLBACK_OBSERVATION_DISTANCE_KM = 150.0
@@ -118,6 +125,11 @@ class VedurIsWeatherDataUpdateCoordinator(DataUpdateCoordinator[VedurIsWeatherDa
             if home_station_id is not None:
                 station_ids.add(home_station_id)
 
+        if entry_config.get(CONF_ENABLE_DEVICE_TRACKER_WEATHER, True):
+            station_ids.update(
+                self._nearest_device_tracker_station_ids(aws_stations)
+            )
+
         if not entry_config.get(CONF_ENABLE_PERSON_WEATHER, True):
             return station_ids
 
@@ -128,6 +140,34 @@ class VedurIsWeatherDataUpdateCoordinator(DataUpdateCoordinator[VedurIsWeatherDa
                 person_state.attributes,
                 zones,
             )
+            if coordinate is None:
+                continue
+
+            nearest = nearest_station(coordinate, aws_stations)
+            if nearest is None or nearest[1] > MAX_FALLBACK_OBSERVATION_DISTANCE_KM:
+                continue
+
+            station_ids.add(nearest[0].station_id)
+
+        return station_ids
+
+    def _nearest_device_tracker_station_ids(
+        self,
+        aws_stations: list[Station],
+    ) -> set[int]:
+        """Return nearest AWS station ids for configured device trackers."""
+        entry_config = self.config_entry.options or self.config_entry.data
+        station_ids: set[int] = set()
+
+        for tracker_entity_id in entry_config.get(
+            CONF_DEVICE_TRACKER_ENTITY_IDS,
+            [],
+        ):
+            state = self.hass.states.get(tracker_entity_id)
+            if state is None:
+                continue
+
+            coordinate = resolve_tracker_coordinate(state.attributes)
             if coordinate is None:
                 continue
 

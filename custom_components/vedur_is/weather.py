@@ -27,6 +27,7 @@ from .api import (
     VedurIsApiClient,
 )
 from .const import (
+    ATTR_DEVICE_TRACKER_ENTITY_ID,
     ATTR_FORECAST_STATION_DISTANCE_KM,
     ATTR_FORECAST_STATION_ID,
     ATTR_FORECAST_STATION_NAME,
@@ -40,6 +41,8 @@ from .const import (
     ATTR_STATION_ID,
     ATTR_STATION_HAS_DIRECT_FORECAST,
     ATTRIBUTION,
+    CONF_DEVICE_TRACKER_ENTITY_IDS,
+    CONF_ENABLE_DEVICE_TRACKER_WEATHER,
     CONF_ENABLE_HOME_WEATHER,
     CONF_ENABLE_PERSON_WEATHER,
     CONF_ENABLE_STATION_WEATHER,
@@ -48,7 +51,12 @@ from .const import (
     DOMAIN,
     SENSOR_KEYS,
 )
-from .geo import Coordinate, nearest_station, resolve_person_coordinate
+from .geo import (
+    Coordinate,
+    nearest_station,
+    resolve_person_coordinate,
+    resolve_tracker_coordinate,
+)
 from .forecast_utils import (
     daily_forecast_dicts,
     hourly_forecast_dicts,
@@ -88,6 +96,14 @@ async def async_setup_entry(
         entities.extend(
             VedurIsPersonWeatherEntity(coordinator, person_entity_id)
             for person_entity_id in hass.states.async_entity_ids("person")
+        )
+    if entry_config.get(CONF_ENABLE_DEVICE_TRACKER_WEATHER, True):
+        entities.extend(
+            VedurIsDeviceTrackerWeatherEntity(coordinator, tracker_entity_id)
+            for tracker_entity_id in entry_config.get(
+                CONF_DEVICE_TRACKER_ENTITY_IDS,
+                [],
+            )
         )
     if entry_config.get(CONF_ENABLE_STATION_WEATHER, True):
         entities.extend(
@@ -417,6 +433,54 @@ class VedurIsHomeWeatherEntity(VedurIsPersonWeatherEntity):
         }
 
 
+class VedurIsDeviceTrackerWeatherEntity(VedurIsPersonWeatherEntity):
+    """Weather entity that follows a configured device tracker."""
+
+    def __init__(
+        self,
+        coordinator: VedurIsWeatherDataUpdateCoordinator,
+        tracker_entity_id: str,
+    ) -> None:
+        """Initialize the device tracker weather entity."""
+        super().__init__(coordinator, tracker_entity_id)
+        self._device_tracker_entity_id = tracker_entity_id
+        self._attr_unique_id = f"{DOMAIN}_{tracker_entity_id}_weather"
+        self._attr_name = _entity_name(
+            coordinator.hass.states.get(tracker_entity_id),
+            tracker_entity_id,
+        )
+        self._attr_device_info = self._device_info(
+            tracker_entity_id,
+            self._attr_name,
+        )
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return station metadata for the current tracker location."""
+        attrs = super().extra_state_attributes
+        attrs.pop("person_entity_id", None)
+        attrs[ATTR_DEVICE_TRACKER_ENTITY_ID] = self._device_tracker_entity_id
+        return attrs
+
+    @property
+    def _person_coordinate(self) -> Coordinate | None:
+        """Return the current device tracker coordinate, if known."""
+        state = self.hass.states.get(self._device_tracker_entity_id)
+        if state is None:
+            return None
+
+        return resolve_tracker_coordinate(state.attributes)
+
+    def _device_info(self, tracker_entity_id: str, name: str) -> DeviceInfo:
+        """Return device registry metadata for a tracker weather entity."""
+        return {
+            "identifiers": {(DOMAIN, f"device_tracker_weather:{tracker_entity_id}")},
+            "name": name,
+            "manufacturer": "Icelandic Met Office",
+            "model": "Device tracker weather",
+        }
+
+
 class VedurIsStationWeatherEntity(
     SingleCoordinatorWeatherEntity[VedurIsWeatherDataUpdateCoordinator],
     WeatherEntity,
@@ -651,6 +715,12 @@ def _person_name(state: State | None) -> str:
     if state is None:
         return "Person"
     return state.name or state.entity_id.removeprefix("person.").replace("_", " ")
+
+
+def _entity_name(state: State | None, entity_id: str) -> str:
+    if state is not None and state.name:
+        return state.name
+    return entity_id.split(".", 1)[-1].replace("_", " ")
 
 
 def _should_create_person_weather(hass: HomeAssistant, entry: Any) -> bool:

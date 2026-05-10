@@ -10,6 +10,8 @@
         "description": "Choose which weather entities to create. Selected stations can also expose disabled-by-default diagnostic metric sensors.",
         "data": {
           "station_ids": "Stations",
+          "device_tracker_entity_ids": "Device trackers",
+          "enable_device_tracker_weather": "Create weather for selected device trackers",
           "enable_home_weather": "Create weather for Home",
           "enable_person_weather": "Create weather for people",
           "enable_station_weather": "Create entities for selected stations"
@@ -37,6 +39,8 @@
         "description": "Choose which weather entities to create. Selected stations can also expose disabled-by-default diagnostic metric sensors.",
         "data": {
           "station_ids": "Stations",
+          "device_tracker_entity_ids": "Device trackers",
+          "enable_device_tracker_weather": "Create weather for selected device trackers",
           "enable_home_weather": "Create weather for Home",
           "enable_person_weather": "Create weather for people",
           "enable_station_weather": "Create entities for selected stations"

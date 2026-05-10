@@ -10,6 +10,7 @@ from custom_components.vedur_is.geo import (
     distance_km,
     nearest_station,
     resolve_person_coordinate,
+    resolve_tracker_coordinate,
 )
 
 
@@ -74,3 +75,17 @@ class TestGeoHelpers(unittest.TestCase):
         )
 
         self.assertEqual(coordinate, Coordinate(64.1, -21.9))
+
+    def test_resolve_tracker_coordinate_from_direct_attributes(self) -> None:
+        """Device trackers use direct latitude and longitude attributes."""
+        coordinate = resolve_tracker_coordinate(
+            {"latitude": "65.68", "longitude": "-18.1"},
+        )
+
+        self.assertEqual(coordinate, Coordinate(65.68, -18.1))
+
+    def test_resolve_tracker_coordinate_does_not_use_zone_state(self) -> None:
+        """Device tracker weather does not infer coordinates from state names."""
+        coordinate = resolve_tracker_coordinate({})
+
+        self.assertIsNone(coordinate)

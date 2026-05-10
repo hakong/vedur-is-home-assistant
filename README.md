@@ -18,6 +18,9 @@ Weather data is provided by the Icelandic Met Office (vedur.is).
   default.
 - Optional weather entities that follow Home Assistant `person` entities.
   Enabled by default.
+- Optional weather entities that follow selected `device_tracker` entities,
+  such as route or destination trackers. Configure the trackers from the
+  integration options.
 - Hourly, daily, and twice-daily forecasts through `weather.get_forecasts`.
   Daily and twice-daily forecasts are derived from future XML time points using
   period high/low temperatures, max wind, and the most significant mapped
@@ -88,6 +91,11 @@ Station weather entities also expose forecast metadata:
 - `forecast_station_id`, `forecast_station_name`, and
   `forecast_station_distance_km`: the forecast station actually used by
   `weather.get_forecasts`.
+
+Device tracker weather entities expose `device_tracker_entity_id` along with
+the same observation and forecast station metadata. They use the tracker's
+standard `latitude` and `longitude` attributes only; if those attributes are
+missing, the weather entity is unavailable.
 
 ## Current Conditions
 

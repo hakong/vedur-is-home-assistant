@@ -6,6 +6,8 @@ import logging
 from typing import Any
 
 from .const import (
+    CONF_DEVICE_TRACKER_ENTITY_IDS,
+    CONF_ENABLE_DEVICE_TRACKER_WEATHER,
     CONF_ENABLE_HOME_WEATHER,
     CONF_ENABLE_PERSON_WEATHER,
     CONF_ENABLE_STATION_WEATHER,
@@ -69,9 +71,18 @@ def _async_remove_stale_registry_entries(hass: Any, entry: Any) -> None:
         str(station_id)
         for station_id in entry_config.get(CONF_STATION_IDS, [])
     }
+    configured_tracker_entity_ids = set(
+        entry_config.get(CONF_DEVICE_TRACKER_ENTITY_IDS, [])
+    )
     entity_registry = er.async_get(hass)
     device_registry = dr.async_get(hass)
 
+    if not entry_config.get(CONF_ENABLE_DEVICE_TRACKER_WEATHER, True):
+        _async_remove_device_tracker_weather_registry_entries(
+            entity_registry,
+            device_registry,
+            entry,
+        )
     if not entry_config.get(CONF_ENABLE_PERSON_WEATHER, True):
         _async_remove_person_weather_registry_entries(
             entity_registry,
@@ -104,6 +115,21 @@ def _async_remove_stale_registry_entries(hass: Any, entry: Any) -> None:
         station_id = vedur_identifiers[0][1]
         if station_id == "home_weather" or station_id.startswith("person_weather:"):
             continue
+        if station_id.startswith("device_tracker_weather:"):
+            if not entry_config.get(CONF_ENABLE_DEVICE_TRACKER_WEATHER, True):
+                continue
+            tracker_entity_id = station_id.removeprefix("device_tracker_weather:")
+            if (
+                tracker_entity_id in configured_tracker_entity_ids
+            ):
+                continue
+            _async_remove_device_tracker_weather_device(
+                entity_registry,
+                device_registry,
+                device,
+                station_id,
+            )
+            continue
         if station_id in configured_station_ids:
             continue
 
@@ -127,6 +153,69 @@ def _async_remove_stale_registry_entries(hass: Any, entry: Any) -> None:
         if entity_id:
             entity_registry.async_remove(entity_id)
         device_registry.async_remove_device(device.id)
+
+
+def _async_remove_device_tracker_weather_registry_entries(
+    entity_registry: Any,
+    device_registry: Any,
+    entry: Any,
+) -> None:
+    """Remove all device tracker weather entities for a config entry."""
+    for entity in list(entity_registry.entities.values()):
+        if (
+            entity.config_entry_id == entry.entry_id
+            and entity.platform == DOMAIN
+            and entity.unique_id
+            and entity.unique_id.startswith(f"{DOMAIN}_device_tracker.")
+        ):
+            _LOGGER.debug(
+                "Removing Vedur.is device tracker weather registry entry: %s",
+                entity.entity_id,
+            )
+            entity_registry.async_remove(entity.entity_id)
+
+    for device in list(device_registry.devices.values()):
+        if entry.entry_id not in device.config_entries:
+            continue
+
+        if any(
+            identifier[0] == DOMAIN
+            and str(identifier[1]).startswith("device_tracker_weather:")
+            for identifier in device.identifiers
+        ):
+            _LOGGER.debug(
+                "Removing Vedur.is device tracker weather device: %s",
+                device.name,
+            )
+            device_registry.async_remove_device(device.id)
+
+
+def _async_remove_device_tracker_weather_device(
+    entity_registry: Any,
+    device_registry: Any,
+    device: Any,
+    identifier: str,
+) -> None:
+    """Remove one stale device tracker weather device and entity."""
+    from homeassistant.components.weather import DOMAIN as WEATHER_DOMAIN
+
+    tracker_entity_id = identifier.removeprefix("device_tracker_weather:")
+    entity_id = entity_registry.async_get_entity_id(
+        WEATHER_DOMAIN,
+        DOMAIN,
+        f"{DOMAIN}_{tracker_entity_id}_weather",
+    )
+    if entity_id:
+        _LOGGER.debug(
+            "Removing stale Vedur.is device tracker weather registry entry: %s",
+            entity_id,
+        )
+        entity_registry.async_remove(entity_id)
+    _LOGGER.debug(
+        "Removing stale Vedur.is device tracker weather device: %s",
+        device.name,
+    )
+    device_registry.async_remove_device(device.id)
 
 
 def _async_remove_person_weather_registry_entries(
