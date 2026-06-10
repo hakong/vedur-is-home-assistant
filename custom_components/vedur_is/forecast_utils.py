@@ -25,6 +25,9 @@ from .weather_utils import (
 
 ForecastDict = dict[str, Any]
 
+TWICE_DAILY_DAY_START_HOUR = 8
+TWICE_DAILY_NIGHT_START_HOUR = 18
+
 _CONDITION_PRIORITY = {
     CONDITION_POURING: 90,
     CONDITION_SNOWY_RAINY: 85,
@@ -116,7 +119,7 @@ def twice_daily_forecast_dicts(
             groups[(segment_start, is_daytime)],
             key=lambda point: point.time,
         )
-        target = segment_start + timedelta(hours=6)
+        target = _segment_target(segment_start, is_daytime)
         representative = _representative_condition_point(segment_points, target)
         windy = _max_by(segment_points, "wind_speed")
 
@@ -156,11 +159,25 @@ def _forecast_cutoff(value: datetime) -> datetime:
 
 def _segment_start(forecast_time: datetime) -> tuple[datetime, bool]:
     day_start = datetime.combine(forecast_time.date(), time.min)
-    if 6 <= forecast_time.hour < 18:
-        return day_start.replace(hour=6), True
-    if forecast_time.hour < 6:
-        return day_start - timedelta(hours=6), False
-    return day_start.replace(hour=18), False
+    if (
+        TWICE_DAILY_DAY_START_HOUR
+        <= forecast_time.hour
+        < TWICE_DAILY_NIGHT_START_HOUR
+    ):
+        return day_start.replace(hour=TWICE_DAILY_DAY_START_HOUR), True
+    if forecast_time.hour < TWICE_DAILY_DAY_START_HOUR:
+        return day_start - timedelta(hours=24 - TWICE_DAILY_NIGHT_START_HOUR), False
+    return day_start.replace(hour=TWICE_DAILY_NIGHT_START_HOUR), False
+
+
+def _segment_target(segment_start: datetime, is_daytime: bool) -> datetime:
+    """Return the representative target time for a day or night segment."""
+    if is_daytime:
+        day_hours = TWICE_DAILY_NIGHT_START_HOUR - TWICE_DAILY_DAY_START_HOUR
+        return segment_start + timedelta(hours=day_hours / 2)
+
+    night_hours = 24 - TWICE_DAILY_NIGHT_START_HOUR + TWICE_DAILY_DAY_START_HOUR
+    return segment_start + timedelta(hours=night_hours / 2)
 
 
 def _representative_condition_point(
