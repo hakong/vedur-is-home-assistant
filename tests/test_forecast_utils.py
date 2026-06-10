@@ -84,8 +84,8 @@ class TestForecastUtils(unittest.TestCase):
 
         self.assertEqual(forecasts[0]["datetime"], "2026-05-05T12:00:00")
 
-    def test_daily_condition_uses_significant_period_weather(self) -> None:
-        """Daily condition is not limited to the nearest midday forecast point."""
+    def test_daily_condition_uses_common_daytime_weather(self) -> None:
+        """Daily condition is based on common daytime weather."""
         points = (
             _point("2026-05-05T06:00:00", 2, 3, "NE", "Cloudy"),
             _point("2026-05-05T12:00:00", 6, 4, "E", "Cloudy"),
@@ -94,4 +94,54 @@ class TestForecastUtils(unittest.TestCase):
 
         forecasts = daily_forecast_dicts(points, now=datetime(2026, 5, 5, 0, 0))
 
-        self.assertEqual(forecasts[0]["condition"], "pouring")
+        self.assertEqual(forecasts[0]["condition"], "cloudy")
+
+    def test_daily_condition_does_not_overweight_overnight_rain(self) -> None:
+        """A few rainy night hours do not dominate a mostly sunny day."""
+        points = (
+            _point("2026-06-12T01:00:00", 12, 3, "E", "Light rain"),
+            _point("2026-06-12T02:00:00", 11, 2, "E", "Light rain"),
+            _point("2026-06-12T03:00:00", 11, 1, "E", "Light rain"),
+            _point("2026-06-12T08:00:00", 14, 0, "E", "Partly cloudy"),
+            _point("2026-06-12T09:00:00", 15, 1, "E", "Clear sky"),
+            _point("2026-06-12T10:00:00", 16, 2, "SE", "Clear sky"),
+            _point("2026-06-12T11:00:00", 17, 2, "SE", "Clear sky"),
+            _point("2026-06-12T12:00:00", 18, 3, "SE", "Partly cloudy"),
+            _point("2026-06-12T13:00:00", 18, 4, "S", "Cloudy"),
+            _point("2026-06-12T14:00:00", 19, 4, "S", "Cloudy"),
+            _point("2026-06-12T15:00:00", 21, 3, "S", "Partly cloudy"),
+            _point("2026-06-12T16:00:00", 21, 3, "S", "Clear sky"),
+            _point("2026-06-12T17:00:00", 21, 3, "S", "Clear sky"),
+            _point("2026-06-12T18:00:00", 21, 3, "S", "Clear sky"),
+            _point("2026-06-12T19:00:00", 20, 2, "S", "Clear sky"),
+            _point("2026-06-12T20:00:00", 20, 2, "S", "Clear sky"),
+            _point("2026-06-12T21:00:00", 18, 2, "S", "Clear sky"),
+        )
+
+        forecasts = daily_forecast_dicts(points, now=datetime(2026, 6, 12, 0, 0))
+
+        self.assertEqual(forecasts[0]["condition"], "sunny")
+
+    def test_twice_daily_condition_uses_common_segment_weather(self) -> None:
+        """Twice-daily periods are not dominated by one cloudy/rainy point."""
+        points = (
+            _point("2026-06-12T06:00:00", 12, 1, "E", "Overcast"),
+            _point("2026-06-12T07:00:00", 13, 0, "E", "Overcast"),
+            _point("2026-06-12T08:00:00", 14, 0, "E", "Partly cloudy"),
+            _point("2026-06-12T09:00:00", 15, 1, "E", "Clear sky"),
+            _point("2026-06-12T10:00:00", 16, 2, "SE", "Clear sky"),
+            _point("2026-06-12T11:00:00", 17, 2, "SE", "Clear sky"),
+            _point("2026-06-12T12:00:00", 18, 3, "SE", "Partly cloudy"),
+            _point("2026-06-12T13:00:00", 18, 4, "S", "Cloudy"),
+            _point("2026-06-12T14:00:00", 19, 4, "S", "Cloudy"),
+            _point("2026-06-12T15:00:00", 21, 3, "S", "Partly cloudy"),
+            _point("2026-06-12T16:00:00", 21, 3, "S", "Clear sky"),
+            _point("2026-06-12T17:00:00", 21, 3, "S", "Clear sky"),
+        )
+
+        forecasts = twice_daily_forecast_dicts(
+            points,
+            now=datetime(2026, 6, 12, 0, 0),
+        )
+
+        self.assertEqual(forecasts[0]["condition"], "sunny")

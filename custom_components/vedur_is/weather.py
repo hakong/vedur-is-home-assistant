@@ -43,11 +43,13 @@ from .const import (
     ATTRIBUTION,
     CONF_DEVICE_TRACKER_ENTITY_IDS,
     CONF_ENABLE_DEVICE_TRACKER_WEATHER,
+    CONF_ENABLE_DERIVED_FORECASTS,
     CONF_ENABLE_HOME_WEATHER,
     CONF_ENABLE_PERSON_WEATHER,
     CONF_ENABLE_STATION_WEATHER,
     CONF_STATION_IDS,
     CONF_STATIONS,
+    DERIVED_FORECAST_ATTRIBUTION,
     DOMAIN,
     SENSOR_KEYS,
 )
@@ -66,7 +68,8 @@ from .weather_coordinator import VedurIsWeatherDataUpdateCoordinator
 from .weather_utils import condition_from_forecast_text, condition_from_observation
 
 MAX_OBSERVATION_DISTANCE_KM = 150.0
-FORECAST_FEATURES = (
+HOURLY_FORECAST_FEATURES = WeatherEntityFeature.FORECAST_HOURLY
+DERIVED_FORECAST_FEATURES = (
     WeatherEntityFeature.FORECAST_DAILY
     | WeatherEntityFeature.FORECAST_HOURLY
     | WeatherEntityFeature.FORECAST_TWICE_DAILY
@@ -142,8 +145,6 @@ class VedurIsPersonWeatherEntity(
     _attr_native_pressure_unit = UnitOfPressure.HPA
     _attr_native_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_native_wind_speed_unit = UnitOfSpeed.METERS_PER_SECOND
-    _attr_supported_features = FORECAST_FEATURES
-    _attr_attribution = ATTRIBUTION
 
     def __init__(
         self,
@@ -159,6 +160,16 @@ class VedurIsPersonWeatherEntity(
             person_entity_id,
             self._attr_name,
         )
+
+    @property
+    def supported_features(self) -> WeatherEntityFeature:
+        """Return supported forecast feature flags."""
+        return _forecast_features(self.coordinator)
+
+    @property
+    def attribution(self) -> str:
+        """Return data attribution text."""
+        return _weather_attribution(self.coordinator)
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to person state changes."""
@@ -492,8 +503,6 @@ class VedurIsStationWeatherEntity(
     _attr_native_pressure_unit = UnitOfPressure.HPA
     _attr_native_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_native_wind_speed_unit = UnitOfSpeed.METERS_PER_SECOND
-    _attr_supported_features = FORECAST_FEATURES
-    _attr_attribution = ATTRIBUTION
 
     def __init__(
         self,
@@ -506,6 +515,16 @@ class VedurIsStationWeatherEntity(
         self._attr_unique_id = f"{DOMAIN}_{station.station_id}_weather"
         self._attr_name = station.name
         self._attr_device_info = self._device_info(station)
+
+    @property
+    def supported_features(self) -> WeatherEntityFeature:
+        """Return supported forecast feature flags."""
+        return _forecast_features(self.coordinator)
+
+    @property
+    def attribution(self) -> str:
+        """Return data attribution text."""
+        return _weather_attribution(self.coordinator)
 
     @property
     def available(self) -> bool:
@@ -761,6 +780,30 @@ def _observation_diagnostics(observation: Observation | None) -> dict[str, Any]:
             if source == OBSERVATION_SOURCE_UNAVAILABLE
         ],
     }
+
+
+def _derived_forecasts_enabled(
+    coordinator: VedurIsWeatherDataUpdateCoordinator,
+) -> bool:
+    """Return whether derived daily and twice-daily forecasts are enabled."""
+    entry_config = coordinator.config_entry.options or coordinator.config_entry.data
+    return bool(entry_config.get(CONF_ENABLE_DERIVED_FORECASTS, False))
+
+
+def _forecast_features(
+    coordinator: VedurIsWeatherDataUpdateCoordinator,
+) -> WeatherEntityFeature:
+    """Return forecast features for this config entry."""
+    if _derived_forecasts_enabled(coordinator):
+        return DERIVED_FORECAST_FEATURES
+    return HOURLY_FORECAST_FEATURES
+
+
+def _weather_attribution(coordinator: VedurIsWeatherDataUpdateCoordinator) -> str:
+    """Return attribution for weather entities."""
+    if _derived_forecasts_enabled(coordinator):
+        return DERIVED_FORECAST_ATTRIBUTION
+    return ATTRIBUTION
 
 
 def _ha_forecasts(forecasts: list[dict[str, Any]]) -> list[Forecast]:

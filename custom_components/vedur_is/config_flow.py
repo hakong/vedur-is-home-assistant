@@ -17,6 +17,7 @@ from .api import CannotConnect, InvalidResponse, Station, VedurIsApiClient
 from .const import (
     CONF_DEVICE_TRACKER_ENTITY_IDS,
     CONF_ENABLE_DEVICE_TRACKER_WEATHER,
+    CONF_ENABLE_DERIVED_FORECASTS,
     CONF_ENABLE_HOME_WEATHER,
     CONF_ENABLE_PERSON_WEATHER,
     CONF_ENABLE_STATION_WEATHER,
@@ -98,6 +99,9 @@ class VedurIsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 enable_station_weather = user_input.get(
                     CONF_ENABLE_STATION_WEATHER, True
                 )
+                enable_derived_forecasts = user_input.get(
+                    CONF_ENABLE_DERIVED_FORECASTS, False
+                )
                 device_tracker_entity_ids = user_input.get(
                     CONF_DEVICE_TRACKER_ENTITY_IDS,
                     [],
@@ -123,6 +127,7 @@ class VedurIsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         CONF_ENABLE_HOME_WEATHER: enable_home_weather,
                         CONF_ENABLE_PERSON_WEATHER: enable_person_weather,
                         CONF_ENABLE_STATION_WEATHER: enable_station_weather,
+                        CONF_ENABLE_DERIVED_FORECASTS: enable_derived_forecasts,
                     },
                 )
 
@@ -134,6 +139,7 @@ class VedurIsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 enable_home_weather=True,
                 enable_person_weather=True,
                 enable_station_weather=True,
+                enable_derived_forecasts=False,
             ),
             errors=errors,
         )
@@ -151,6 +157,7 @@ class VedurIsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         enable_home_weather: bool,
         enable_person_weather: bool,
         enable_station_weather: bool,
+        enable_derived_forecasts: bool,
     ) -> vol.Schema:
         """Return the station selection schema."""
         return _select_schema(
@@ -161,6 +168,7 @@ class VedurIsConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             default_enable_home_weather=enable_home_weather,
             default_enable_person_weather=enable_person_weather,
             default_enable_station_weather=enable_station_weather,
+            default_enable_derived_forecasts=enable_derived_forecasts,
         )
 
     def _already_configured(self, station_ids: list[int]) -> list[int]:
@@ -217,6 +225,7 @@ class VedurIsOptionsFlow(config_entries.OptionsFlow):
         enable_home_weather = _enable_home_weather(self._config_entry)
         enable_person_weather = _enable_person_weather(self._config_entry)
         enable_station_weather = _enable_station_weather(self._config_entry)
+        enable_derived_forecasts = _enable_derived_forecasts(self._config_entry)
 
         if user_input is not None:
             selected_ids = [
@@ -231,6 +240,9 @@ class VedurIsOptionsFlow(config_entries.OptionsFlow):
             enable_person_weather = user_input.get(CONF_ENABLE_PERSON_WEATHER, True)
             enable_station_weather = user_input.get(
                 CONF_ENABLE_STATION_WEATHER, True
+            )
+            enable_derived_forecasts = user_input.get(
+                CONF_ENABLE_DERIVED_FORECASTS, False
             )
             device_tracker_entity_ids = user_input.get(
                 CONF_DEVICE_TRACKER_ENTITY_IDS,
@@ -267,6 +279,7 @@ class VedurIsOptionsFlow(config_entries.OptionsFlow):
                     CONF_ENABLE_HOME_WEATHER: enable_home_weather,
                     CONF_ENABLE_PERSON_WEATHER: enable_person_weather,
                     CONF_ENABLE_STATION_WEATHER: enable_station_weather,
+                    CONF_ENABLE_DERIVED_FORECASTS: enable_derived_forecasts,
                 }
                 _async_remove_station_registry_entries(self.hass, removed_ids)
                 _async_remove_device_tracker_registry_entries(
@@ -291,6 +304,7 @@ class VedurIsOptionsFlow(config_entries.OptionsFlow):
                 default_enable_home_weather=enable_home_weather,
                 default_enable_person_weather=enable_person_weather,
                 default_enable_station_weather=enable_station_weather,
+                default_enable_derived_forecasts=enable_derived_forecasts,
             ),
             errors=errors,
         )
@@ -310,6 +324,7 @@ def _select_schema(
     default_enable_home_weather: bool,
     default_enable_person_weather: bool,
     default_enable_station_weather: bool,
+    default_enable_derived_forecasts: bool,
 ) -> vol.Schema:
     """Return the station selection schema."""
     options = [
@@ -359,6 +374,10 @@ def _select_schema(
             vol.Optional(
                 CONF_ENABLE_STATION_WEATHER,
                 default=default_enable_station_weather,
+            ): selector.BooleanSelector(),
+            vol.Optional(
+                CONF_ENABLE_DERIVED_FORECASTS,
+                default=default_enable_derived_forecasts,
             ): selector.BooleanSelector(),
         }
     )
@@ -445,6 +464,16 @@ def _enable_station_weather(entry: ConfigEntry) -> bool:
         entry.options.get(
             CONF_ENABLE_STATION_WEATHER,
             entry.data.get(CONF_ENABLE_STATION_WEATHER, True),
+        )
+    )
+
+
+def _enable_derived_forecasts(entry: ConfigEntry) -> bool:
+    """Return whether derived daily and twice-daily forecasts are enabled."""
+    return bool(
+        entry.options.get(
+            CONF_ENABLE_DERIVED_FORECASTS,
+            entry.data.get(CONF_ENABLE_DERIVED_FORECASTS, False),
         )
     )
 

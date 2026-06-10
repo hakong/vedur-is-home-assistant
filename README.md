@@ -21,10 +21,13 @@ Weather data is provided by the Icelandic Met Office (vedur.is).
 - Optional weather entities that follow selected `device_tracker` entities,
   such as route or destination trackers. Configure the trackers from the
   integration options.
-- Hourly, daily, and twice-daily forecasts through `weather.get_forecasts`.
-  Daily and twice-daily forecasts are derived from future XML time points using
-  period high/low temperatures, max wind, and the most significant mapped
-  condition in the period.
+- Hourly forecasts through `weather.get_forecasts`, using Vedur.is XML forecast
+  time points.
+- Optional daily and twice-daily forecasts. These are disabled by default
+  because Vedur.is does not expose native daily or twice-daily forecast products
+  through the APIs used by this integration. When enabled, they are derived from
+  future XML time points using period high/low temperatures, max wind, and the
+  most common mapped condition in the relevant daytime or day/night period.
 - Hourly polling through a `DataUpdateCoordinator`.
 - Diagnostic sensors for temperature, humidity, dew point, wind speed, wind
   gust, wind direction, pressure, and precipitation. These are disabled by
@@ -96,6 +99,11 @@ Device tracker weather entities expose `device_tracker_entity_id` along with
 the same observation and forecast station metadata. They use the tracker's
 standard `latitude` and `longitude` attributes only; if those attributes are
 missing, the weather entity is unavailable.
+
+Hourly forecasts come directly from Vedur.is XML forecast time points. Daily
+and twice-daily forecasts are optional derived summaries made by this
+integration; when that option is enabled, weather entities add a note to their
+Home Assistant attribution text.
 
 ## Current Conditions
 

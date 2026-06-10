@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterable
 from datetime import datetime, time, timedelta
 from typing import Any
@@ -73,7 +74,12 @@ def daily_forecast_dicts(
     for day_start in sorted(groups):
         day_points = sorted(groups[day_start], key=lambda point: point.time)
         target = day_start.replace(hour=12)
-        representative = _most_significant_condition_point(day_points, target)
+        representative = _representative_condition_point(
+            day_points,
+            target,
+            preferred_start=8,
+            preferred_end=22,
+        )
         windy = _max_by(day_points, "wind_speed")
 
         forecast: ForecastDict = {
@@ -111,7 +117,7 @@ def twice_daily_forecast_dicts(
             key=lambda point: point.time,
         )
         target = segment_start + timedelta(hours=6)
-        representative = _most_significant_condition_point(segment_points, target)
+        representative = _representative_condition_point(segment_points, target)
         windy = _max_by(segment_points, "wind_speed")
 
         forecast: ForecastDict = {
@@ -157,17 +163,49 @@ def _segment_start(forecast_time: datetime) -> tuple[datetime, bool]:
     return day_start.replace(hour=18), False
 
 
-def _most_significant_condition_point(
+def _representative_condition_point(
     points: list[ForecastPoint],
     target: datetime,
+    *,
+    preferred_start: int | None = None,
+    preferred_end: int | None = None,
 ) -> ForecastPoint:
-    return max(
+    preferred_points = _preferred_condition_points(
         points,
+        preferred_start,
+        preferred_end,
+    )
+    condition_counts = Counter(
+        condition_from_forecast_text(point.weather_text, point.time)
+        for point in preferred_points
+    )
+    return max(
+        preferred_points,
         key=lambda point: (
-            _condition_priority(point),
+            condition_counts[condition_from_forecast_text(
+                point.weather_text,
+                point.time,
+            )],
             -abs(point.time - target).total_seconds(),
+            _condition_priority(point),
         ),
     )
+
+
+def _preferred_condition_points(
+    points: list[ForecastPoint],
+    preferred_start: int | None,
+    preferred_end: int | None,
+) -> list[ForecastPoint]:
+    if preferred_start is None or preferred_end is None:
+        return points
+
+    preferred = [
+        point
+        for point in points
+        if preferred_start <= point.time.hour < preferred_end
+    ]
+    return preferred or points
 
 
 def _condition_priority(point: ForecastPoint) -> int:

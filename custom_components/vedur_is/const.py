@@ -6,6 +6,10 @@ DOMAIN = "vedur_is"
 INTEGRATION_NAME = "Icelandic Met Office Weather"
 ENTRY_TITLE = INTEGRATION_NAME
 ATTRIBUTION = "Data provided by the Icelandic Met Office (vedur.is)."
+DERIVED_FORECAST_ATTRIBUTION = (
+    "Data provided by the Icelandic Met Office (vedur.is). "
+    "Daily and twice-daily forecasts are derived by this integration."
+)
 
 PLATFORMS: list[str] = ["sensor", "weather"]
 
@@ -16,6 +20,7 @@ CONF_ENABLE_DEVICE_TRACKER_WEATHER = "enable_device_tracker_weather"
 CONF_ENABLE_HOME_WEATHER = "enable_home_weather"
 CONF_ENABLE_PERSON_WEATHER = "enable_person_weather"
 CONF_ENABLE_STATION_WEATHER = "enable_station_weather"
+CONF_ENABLE_DERIVED_FORECASTS = "enable_derived_forecasts"
 
 SENSOR_KEYS = ("t", "rh", "td", "f", "fg", "d", "p", "r")
 
