@@ -39,13 +39,20 @@ from .const import (
     ATTR_ALERT_HIGHEST_COLOR,
     ATTR_ALERT_HIGHEST_SEVERITY,
     ATTR_ALERTS,
+    ATTR_DATA_STALE,
+    ATTR_LAST_SUCCESSFUL_UPDATE,
     ATTR_OBSERVATION_SOURCE,
     ATTR_OBSERVATION_TIME,
+    ATTR_SOURCE_ERRORS,
+    ATTR_STALE_SOURCES,
     ATTR_STATION_ID,
     ATTRIBUTION,
+    CONF_ENABLE_STATION_WEATHER,
+    CONF_STATION_IDS,
+    CONF_STATIONS,
     DOMAIN,
 )
-from .coordinator import VedurIsDataUpdateCoordinator
+from .weather_coordinator import VedurIsWeatherDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -124,7 +131,7 @@ async def async_setup_entry(
     """Set up Vedur.is sensors from a config entry."""
     from homeassistant.helpers import aiohttp_client
 
-    coordinator: VedurIsDataUpdateCoordinator = entry.runtime_data
+    coordinator: VedurIsWeatherDataUpdateCoordinator = entry.runtime_data
     alerts_coordinator = VedurIsAlertsDataUpdateCoordinator(
         hass,
         VedurIsApiClient(aiohttp_client.async_get_clientsession(hass)),
@@ -133,8 +140,25 @@ async def async_setup_entry(
     await alerts_coordinator.async_refresh()
 
     entities: list[SensorEntity] = [VedurIsWeatherAlertsSensor(alerts_coordinator)]
-    for station_id in coordinator.station_ids:
-        station = coordinator.stations.get(station_id) or Station(
+    entry_config = entry.options or entry.data
+    station_ids: list[int] = []
+    if entry_config.get(CONF_ENABLE_STATION_WEATHER, True):
+        station_ids = [
+            int(station_id) for station_id in entry_config.get(CONF_STATION_IDS, [])
+        ]
+    stored_stations = {
+        station.station_id: station
+        for station in (
+            Station.from_api(station_data)
+            for station_data in entry_config.get(CONF_STATIONS, [])
+        )
+    }
+    for station_id in station_ids:
+        station = (
+            coordinator.data.stations.get(station_id)
+            if coordinator.data is not None
+            else None
+        ) or stored_stations.get(station_id) or Station(
             station_id=station_id,
             name=str(station_id),
             abbr=None,
@@ -152,7 +176,7 @@ async def async_setup_entry(
 
     _LOGGER.debug(
         "Adding Vedur.is sensors for stations %s: %s entities",
-        coordinator.station_ids,
+        station_ids,
         len(entities),
     )
     async_add_entities(entities)
@@ -200,10 +224,16 @@ class VedurIsWeatherAlertsSensor(
                 }
             ),
             ATTR_ALERTS: [alert.as_attribute_dict() for alert in alerts],
+            ATTR_DATA_STALE: self.coordinator.data_stale,
+            ATTR_STALE_SOURCES: ["alerts"] if self.coordinator.data_stale else [],
+            ATTR_SOURCE_ERRORS: dict(self.coordinator.source_errors),
         }
 
 
-class VedurIsSensor(CoordinatorEntity[VedurIsDataUpdateCoordinator], SensorEntity):
+class VedurIsSensor(
+    CoordinatorEntity[VedurIsWeatherDataUpdateCoordinator],
+    SensorEntity,
+):
     """Representation of a Vedur.is observation sensor."""
 
     entity_description: VedurIsSensorEntityDescription
@@ -214,7 +244,7 @@ class VedurIsSensor(CoordinatorEntity[VedurIsDataUpdateCoordinator], SensorEntit
 
     def __init__(
         self,
-        coordinator: VedurIsDataUpdateCoordinator,
+        coordinator: VedurIsWeatherDataUpdateCoordinator,
         station: Station,
         description: VedurIsSensorEntityDescription,
     ) -> None:
@@ -258,6 +288,7 @@ class VedurIsSensor(CoordinatorEntity[VedurIsDataUpdateCoordinator], SensorEntit
             attrs[ATTR_OBSERVATION_SOURCE] = observation.value_source(
                 self.entity_description.key
             )
+        attrs.update(_data_diagnostics(self.coordinator.data))
         return attrs
 
     @property
@@ -265,7 +296,7 @@ class VedurIsSensor(CoordinatorEntity[VedurIsDataUpdateCoordinator], SensorEntit
         """Return the latest observation for this sensor's station."""
         if self.coordinator.data is None:
             return None
-        return self.coordinator.data.get(self._station.station_id)
+        return self.coordinator.data.observations.get(self._station.station_id)
 
     def _device_info(self, station: Station) -> DeviceInfo:
         """Return device registry metadata."""
@@ -324,3 +355,23 @@ def _highest_ranked_value(
     if not ranked_values:
         return None
     return max(ranked_values, key=lambda value: ranks[value.casefold()])
+
+
+def _data_diagnostics(data: Any) -> dict[str, Any]:
+    """Return coordinator source diagnostics."""
+    if data is None:
+        return {
+            ATTR_DATA_STALE: True,
+            ATTR_STALE_SOURCES: [],
+            ATTR_SOURCE_ERRORS: {},
+            ATTR_LAST_SUCCESSFUL_UPDATE: None,
+        }
+
+    return {
+        ATTR_DATA_STALE: data.data_stale,
+        ATTR_STALE_SOURCES: sorted(data.stale_sources),
+        ATTR_SOURCE_ERRORS: dict(data.source_errors),
+        ATTR_LAST_SUCCESSFUL_UPDATE: data.last_successful_update.isoformat()
+        if data.last_successful_update
+        else None,
+    }

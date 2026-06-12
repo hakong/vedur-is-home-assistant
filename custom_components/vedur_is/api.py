@@ -55,6 +55,16 @@ class InvalidResponse(VedurIsApiError):
     """Raised when the API response is not usable."""
 
 
+class HttpStatusError(InvalidResponse):
+    """Raised when vedur.is returns an HTTP error status."""
+
+    def __init__(self, status: int, url: str) -> None:
+        """Initialize the HTTP status error."""
+        self.status = status
+        self.url = url
+        super().__init__(f"vedur.is returned HTTP {status}")
+
+
 @dataclass(frozen=True, slots=True)
 class Station:
     """Weather station metadata."""
@@ -425,8 +435,9 @@ class VedurIsApiClient:
                 url, params=params, timeout=timeout
             ) as response:
                 if response.status >= 400:
-                    raise InvalidResponse(
-                        f"vedur.is returned HTTP {response.status}"
+                    raise HttpStatusError(
+                        response.status,
+                        str(getattr(response, "url", url)),
                     )
                 if response.status == 204:
                     return None
@@ -521,8 +532,9 @@ class VedurIsApiClient:
                 url, params=params, timeout=timeout
             ) as response:
                 if response.status >= 400:
-                    raise InvalidResponse(
-                        f"vedur.is returned HTTP {response.status}"
+                    raise HttpStatusError(
+                        response.status,
+                        str(getattr(response, "url", url)),
                     )
                 return await response.text()
         except TimeoutError as err:

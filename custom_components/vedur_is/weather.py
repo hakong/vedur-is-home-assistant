@@ -13,7 +13,6 @@ from homeassistant.components.weather import (
 )
 from homeassistant.const import UnitOfPressure, UnitOfSpeed, UnitOfTemperature
 from homeassistant.core import Event, HomeAssistant, State, callback
-from homeassistant.helpers import aiohttp_client
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_state_change_event
@@ -24,20 +23,23 @@ from .api import (
     Observation,
     Station,
     StationForecast,
-    VedurIsApiClient,
 )
 from .const import (
+    ATTR_DATA_STALE,
     ATTR_DEVICE_TRACKER_ENTITY_ID,
     ATTR_FORECAST_STATION_DISTANCE_KM,
     ATTR_FORECAST_STATION_ID,
     ATTR_FORECAST_STATION_NAME,
     ATTR_FORECAST_USES_NEARBY_STATION,
+    ATTR_LAST_SUCCESSFUL_UPDATE,
     ATTR_OBSERVATION_STATION_DISTANCE_KM,
     ATTR_OBSERVATION_STATION_ID,
     ATTR_OBSERVATION_STATION_NAME,
     ATTR_OBSERVATION_TIME,
     ATTR_OBSERVATION_UNAVAILABLE_FIELDS,
     ATTR_OBSERVATION_VALUE_SOURCES,
+    ATTR_SOURCE_ERRORS,
+    ATTR_STALE_SOURCES,
     ATTR_STATION_ID,
     ATTR_STATION_HAS_DIRECT_FORECAST,
     ATTRIBUTION,
@@ -82,9 +84,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up person-following Vedur.is weather entities."""
-    client = VedurIsApiClient(aiohttp_client.async_get_clientsession(hass))
-    coordinator = VedurIsWeatherDataUpdateCoordinator(hass, client, entry)
-    await coordinator.async_config_entry_first_refresh()
+    coordinator: VedurIsWeatherDataUpdateCoordinator = entry.runtime_data
 
     entry_config = entry.options or entry.data
     stations: dict[int, Station] = {}
@@ -192,12 +192,18 @@ class VedurIsPersonWeatherEntity(
     def available(self) -> bool:
         """Return if weather data is available for the person's location."""
         observation_result = self._nearest_observation_station
+        forecast_result = self._nearest_forecast_station
         return (
             super().available
             and self._person_coordinate is not None
-            and observation_result is not None
-            and observation_result[1] <= MAX_OBSERVATION_DISTANCE_KM
-            and self._observation is not None
+            and (
+                (
+                    observation_result is not None
+                    and observation_result[1] <= MAX_OBSERVATION_DISTANCE_KM
+                    and self._observation is not None
+                )
+                or (forecast_result is not None and self._forecast is not None)
+            )
         )
 
     @property
@@ -288,6 +294,7 @@ class VedurIsPersonWeatherEntity(
             attrs["precipitation"] = precipitation
 
         attrs.update(_observation_diagnostics(self._observation))
+        attrs.update(_data_diagnostics(self.coordinator.data))
         return attrs
 
     async def async_forecast_hourly(self) -> list[Forecast] | None:
@@ -529,7 +536,10 @@ class VedurIsStationWeatherEntity(
     @property
     def available(self) -> bool:
         """Return if weather data is available for the station."""
-        return super().available and self._observation is not None
+        return (
+            super().available
+            and (self._observation is not None or self._forecast is not None)
+        )
 
     @property
     def condition(self) -> str | None:
@@ -619,6 +629,7 @@ class VedurIsStationWeatherEntity(
             and forecast_result[0].station_id != self._station.station_id
         )
         attrs.update(_observation_diagnostics(observation))
+        attrs.update(_data_diagnostics(self.coordinator.data))
         return attrs
 
     async def async_forecast_hourly(self) -> list[Forecast] | None:
@@ -779,6 +790,26 @@ def _observation_diagnostics(observation: Observation | None) -> dict[str, Any]:
             for key, source in sources.items()
             if source == OBSERVATION_SOURCE_UNAVAILABLE
         ],
+    }
+
+
+def _data_diagnostics(data: Any) -> dict[str, Any]:
+    """Return coordinator source diagnostics."""
+    if data is None:
+        return {
+            ATTR_DATA_STALE: True,
+            ATTR_STALE_SOURCES: [],
+            ATTR_SOURCE_ERRORS: {},
+            ATTR_LAST_SUCCESSFUL_UPDATE: None,
+        }
+
+    return {
+        ATTR_DATA_STALE: data.data_stale,
+        ATTR_STALE_SOURCES: sorted(data.stale_sources),
+        ATTR_SOURCE_ERRORS: dict(data.source_errors),
+        ATTR_LAST_SUCCESSFUL_UPDATE: data.last_successful_update.isoformat()
+        if data.last_successful_update
+        else None,
     }
 
 

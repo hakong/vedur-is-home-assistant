@@ -13,6 +13,7 @@ from custom_components.vedur_is.api import (
     CAP_BASE_URL,
     CannotConnect,
     GOTTVEDUR_BASE_URL,
+    HttpStatusError,
     InvalidResponse,
     OBSERVATION_SOURCE_GOTTVEDUR_IS,
     OBSERVATION_SOURCE_OFFICIAL_API,
@@ -359,8 +360,10 @@ class TestVedurIsApiClient(unittest.TestCase):
         """HTTP errors are converted into integration API errors."""
         client = VedurIsApiClient(FakeSession({}, status=500))  # type: ignore[arg-type]
 
-        with self.assertRaises(InvalidResponse):
+        with self.assertRaises(InvalidResponse) as context:
             asyncio.run(client.async_get_stations())
+        self.assertIsInstance(context.exception, HttpStatusError)
+        self.assertEqual(context.exception.status, 500)
 
     def test_aiohttp_error_raises_cannot_connect(self) -> None:
         """Network errors are converted into connection errors."""

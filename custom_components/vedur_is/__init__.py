@@ -26,7 +26,7 @@ async def async_setup_entry(hass: Any, entry: Any) -> bool:
     from homeassistant.helpers import aiohttp_client
 
     from .api import VedurIsApiClient
-    from .coordinator import VedurIsDataUpdateCoordinator
+    from .weather_coordinator import VedurIsWeatherDataUpdateCoordinator
 
     if entry.title != ENTRY_TITLE:
         _LOGGER.debug("Normalizing Vedur.is config entry title")
@@ -39,7 +39,7 @@ async def async_setup_entry(hass: Any, entry: Any) -> bool:
     _async_remove_stale_registry_entries(hass, entry)
 
     client = VedurIsApiClient(aiohttp_client.async_get_clientsession(hass))
-    coordinator = VedurIsDataUpdateCoordinator(hass, client, entry)
+    coordinator = VedurIsWeatherDataUpdateCoordinator(hass, client, entry)
 
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
