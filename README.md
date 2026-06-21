@@ -8,11 +8,13 @@ Weather data is provided by the Icelandic Met Office (vedur.is).
 
 ## Features
 
-- UI config flow.
+- UI config flow with full station browsing, map-based nearby station
+  suggestions, or place search that opens the map near the matched location.
 - Optional weather for Home, using Home Assistant's home zone. Enabled by
   default.
 - Optional station selection for additional station weather entities.
-- Station selector labels include the station owner when provided by the API.
+- Station selector labels include station distance in nearby mode and the
+  station owner when provided by the API.
 - Multiple optional stations in one config entry.
 - Optional weather and diagnostic entities for selected stations. Enabled by
   default.
@@ -29,13 +31,17 @@ Weather data is provided by the Icelandic Met Office (vedur.is).
   future XML time points using period high/low temperatures, max wind, and the
   most common mapped condition in the relevant daytime or day/night period.
 - Hourly polling through a `DataUpdateCoordinator`.
-- Diagnostic sensors for temperature, humidity, dew point, wind speed, wind
-  gust, wind direction, pressure, and precipitation. These are disabled by
-  default because the `weather.*` entities are the primary interface.
+- Diagnostic sensors for condition, temperature, humidity, dew point, wind
+  speed, wind gust, wind direction, pressure, and precipitation. These are
+  created for Home, person-following, device-tracker, and selected-station
+  weather devices, and are disabled by default because the `weather.*`
+  entities are the primary interface.
 - Station metadata is used for Home Assistant device registry entries.
 - Weather entities expose observation source diagnostics and forecast station
   metadata.
 - Weather alerts sensor for active Icelandic Met Office CAP weather warnings.
+- `vedur_is.get_forecast_for_location` action for one-off nearest-station
+  forecast lookups by latitude/longitude without creating an entity.
 - No API key required.
 
 ## Installation
@@ -105,6 +111,20 @@ and twice-daily forecasts are optional derived summaries made by this
 integration; when that option is enabled, weather entities add a note to their
 Home Assistant attribution text.
 
+## Station Selection
+
+The integration can help find stations near a place in two ways:
+
+- Search for an Icelandic place name, such as `Þórsmörk`, then review the map
+  centered on the matched location before selecting nearby stations.
+- Pick a location directly on the map and then choose from the nearest stations.
+
+Place search uses the public OpenStreetMap Nominatim search service. Searches
+are only sent when you submit the form, not while typing, and repeated searches
+are cached in memory during the Home Assistant process. Forecasts remain
+station-based; the integration uses the nearest suitable Vedur station rather
+than a gridded point forecast.
+
 ## Current Conditions
 
 Weather entity numeric values such as temperature, humidity, dew point, wind,
@@ -114,6 +134,32 @@ or `clear-night`, comes from the nearest XML forecast time point rather than
 from the observation API. The observation API does not currently provide a
 single current-condition text field equivalent to Home Assistant's weather
 condition state.
+
+## One-Off Location Forecasts
+
+Use the `vedur_is.get_forecast_for_location` action to get the nearest Vedur
+observation station and XML forecast station for a coordinate without adding a
+station to the integration.
+
+Example:
+
+```yaml
+action: vedur_is.get_forecast_for_location
+data:
+  latitude: 64.1466
+  longitude: -21.9426
+  type: hourly
+response_variable: vedur_forecast
+```
+
+Supported forecast types are `hourly`, `daily`, and `twice_daily`. Daily and
+twice-daily responses are derived summaries, matching the integration's weather
+entity behavior when derived forecasts are enabled.
+
+The action response includes `observation_station`, `observation`,
+`forecast_station`, and `forecast`. Forecasts are still station-based; the
+integration selects the nearest forecast-capable Vedur station for the
+coordinate.
 
 ## API Endpoints Used
 
@@ -161,8 +207,15 @@ details with headline, description, timing, links, and CAP polygon data.
 
 ## Diagnostic Sensors
 
+Every weather device/location has disabled-by-default diagnostic sensors for
+its current weather values. Enable only the entities needed by dashboards,
+automations, or displays that cannot read attributes from a `weather.*` entity.
+For example, enabling **Wind speed** under the Home weather device provides a
+normal sensor entity suitable for NSPanel displays without a template sensor.
+
 | API key | Sensor | Unit |
 | --- | --- | --- |
+| forecast/observation | Condition | Home Assistant weather condition |
 | `t` | Temperature | Celsius |
 | `rh` | Humidity | percent |
 | `td` | Dew point | Celsius |

@@ -49,7 +49,9 @@ Future ideas and follow-up work for the Vedur.is Home Assistant integration.
   forecast-capable station.
 - Add tests for forecast distance and fallback metadata.
 - Explore whether forecasts can be requested or interpolated by latitude and
-  longitude. Current known public sources appear station-based.
+  longitude from another official/public source. The current
+  `get_forecast_for_location` action returns the nearest station-based Vedur XML
+  forecast, not a gridded or interpolated forecast.
 
 ## Release Polish
 

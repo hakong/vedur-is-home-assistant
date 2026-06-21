@@ -5,20 +5,64 @@
         "title": "Set up Icelandic Met Office Weather",
         "description": "Could not load the station list."
       },
-      "select": {
-        "title": "Select stations",
-        "description": "Choose which weather entities to create. Selected stations can also expose disabled-by-default diagnostic metric sensors.",
+      "menu": {
+        "title": "Set up weather",
+        "description": "Use Home/person weather with no station selection, or add optional station weather.",
+        "menu_options": {
+          "settings": "Continue without stations",
+          "search_place": "Search for a place",
+          "nearby": "Show map",
+          "select": "Browse station list"
+        }
+      },
+      "settings": {
+        "title": "Weather entity settings",
+        "description": "Choose which automatic weather entities to create. You can add stations now or later from the integration options.",
         "data": {
-          "station_ids": "Stations",
           "device_tracker_entity_ids": "Device trackers",
           "enable_device_tracker_weather": "Create weather for selected device trackers",
           "enable_derived_forecasts": "Enable derived daily and twice-daily forecasts",
           "enable_home_weather": "Create weather for Home",
           "enable_person_weather": "Create weather for people",
-          "enable_station_weather": "Create entities for selected stations"
+          "enable_station_weather": "Create weather for selected stations"
         },
         "data_description": {
           "enable_derived_forecasts": "Vedur.is exposes timed XML forecast points. Daily and twice-daily forecasts are summaries derived by this integration, not native Vedur.is forecast products."
+        }
+      },
+      "search_place": {
+        "title": "Search for a place",
+        "description": "Enter an Icelandic place name. The next step will open the map at that location so you can adjust it before selecting nearby stations. Place search is provided by OpenStreetMap Nominatim.",
+        "data": {
+          "place_query": "Place"
+        }
+      },
+      "select_place": {
+        "title": "Choose matching place",
+        "description": "Choose the matching place. The next step will open the map at that location.",
+        "data": {
+          "place_result": "Place"
+        }
+      },
+      "nearby": {
+        "title": "Find nearby stations",
+        "description": "Choose a location on the map. The next step will show the nearest weather stations.",
+        "data": {
+          "location": "Location"
+        }
+      },
+      "nearby_select": {
+        "title": "Select nearby stations",
+        "description": "Choose from the nearest stations. The next step lets you review integration options before saving.",
+        "data": {
+          "station_ids": "Nearby stations"
+        }
+      },
+      "select": {
+        "title": "Select stations",
+        "description": "Choose optional station weather entities. The next step lets you review integration settings before saving.",
+        "data": {
+          "station_ids": "Stations"
         }
       }
     },
@@ -26,7 +70,10 @@
       "already_configured": "One or more selected stations are already configured.",
       "cannot_connect": "Could not connect to vedur.is.",
       "invalid_response": "The Icelandic Met Office weather API returned an unexpected response.",
-      "no_stations": "No active automatic stations matched the search."
+      "invalid_location": "The selected location was not valid.",
+      "no_stations": "No active automatic stations matched the search.",
+      "place_not_found": "No matching Icelandic place was found.",
+      "required": "Enter a place name."
     },
     "abort": {
       "already_configured": "These stations are already configured."
@@ -38,31 +85,99 @@
         "title": "Manage Icelandic Met Office Weather",
         "description": "Could not load the station list."
       },
-      "select": {
-        "title": "Select stations",
-        "description": "Choose which weather entities to create. Selected stations can also expose disabled-by-default diagnostic metric sensors.",
+      "menu": {
+        "title": "Configure weather",
+        "description": "Choose what you want to change.",
+        "menu_options": {
+          "settings": "Change settings",
+          "search_place": "Add stations by place",
+          "nearby": "Add stations from map",
+          "select": "Manage station list"
+        }
+      },
+      "settings": {
+        "title": "Weather entity settings",
+        "description": "Change which automatic weather entities are created. This does not change the selected station list.",
         "data": {
-          "station_ids": "Stations",
           "device_tracker_entity_ids": "Device trackers",
           "enable_device_tracker_weather": "Create weather for selected device trackers",
           "enable_derived_forecasts": "Enable derived daily and twice-daily forecasts",
           "enable_home_weather": "Create weather for Home",
           "enable_person_weather": "Create weather for people",
-          "enable_station_weather": "Create entities for selected stations"
+          "enable_station_weather": "Create weather for selected stations"
         },
         "data_description": {
           "enable_derived_forecasts": "Vedur.is exposes timed XML forecast points. Daily and twice-daily forecasts are summaries derived by this integration, not native Vedur.is forecast products."
+        }
+      },
+      "search_place": {
+        "title": "Search for a place",
+        "description": "Enter an Icelandic place name. The next step will open the map at that location so you can adjust it before selecting nearby stations. Place search is provided by OpenStreetMap Nominatim.",
+        "data": {
+          "place_query": "Place"
+        }
+      },
+      "select_place": {
+        "title": "Choose matching place",
+        "description": "Choose the matching place. The next step will open the map at that location.",
+        "data": {
+          "place_result": "Place"
+        }
+      },
+      "nearby": {
+        "title": "Find nearby stations",
+        "description": "Choose a location on the map. The next step will show the nearest weather stations.",
+        "data": {
+          "location": "Location"
+        }
+      },
+      "nearby_select": {
+        "title": "Select nearby stations",
+        "description": "Choose nearby stations to add. Existing stations are kept unless you remove them from Manage station list.",
+        "data": {
+          "station_ids": "Nearby stations"
+        }
+      },
+      "select": {
+        "title": "Manage station list",
+        "description": "Add or remove selected station weather entities. This does not change weather entity settings.",
+        "data": {
+          "station_ids": "Stations"
         }
       }
     },
     "error": {
       "already_configured": "One or more selected stations are already configured in another entry.",
       "cannot_connect": "Could not connect to vedur.is.",
-      "invalid_response": "The Icelandic Met Office weather API returned an unexpected response."
+      "invalid_location": "The selected location was not valid.",
+      "invalid_response": "The Icelandic Met Office weather API returned an unexpected response.",
+      "place_not_found": "No matching Icelandic place was found.",
+      "required": "Enter a place name."
+    }
+  },
+  "services": {
+    "get_forecast_for_location": {
+      "name": "Get forecast for location",
+      "description": "Return the nearest Vedur observation station and XML forecast for a latitude/longitude without creating entities.",
+      "fields": {
+        "latitude": {
+          "name": "Latitude"
+        },
+        "longitude": {
+          "name": "Longitude"
+        },
+        "type": {
+          "name": "Forecast type",
+          "description": "Choose hourly XML points or derived daily/twice-daily summaries."
+        }
+      }
     }
   },
   "entity": {
     "sensor": {
+      "condition": {
+        "name": "Condition"
+      },
       "temperature": {
         "name": "Temperature"
       },

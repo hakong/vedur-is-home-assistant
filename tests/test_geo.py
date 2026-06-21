@@ -9,6 +9,7 @@ from custom_components.vedur_is.geo import (
     Coordinate,
     distance_km,
     nearest_station,
+    nearest_stations,
     resolve_person_coordinate,
     resolve_tracker_coordinate,
 )
@@ -55,6 +56,20 @@ class TestGeoHelpers(unittest.TestCase):
 
         self.assertIsNotNone(result)
         self.assertEqual(result[0].station_id, 31475)  # type: ignore[index]
+
+    def test_nearest_stations(self) -> None:
+        """Stations are returned by distance and can be limited."""
+        results = nearest_stations(
+            Coordinate(64.09, -21.91),
+            [
+                _station(1, "Far", 65.68, -18.1),
+                _station(2, "Near", 64.08, -21.9),
+                _station(3, "Nearer", 64.085, -21.905),
+            ],
+            limit=2,
+        )
+
+        self.assertEqual([station.station_id for station, _ in results], [3, 2])
 
     def test_resolve_person_coordinate_from_direct_attributes(self) -> None:
         """Direct latitude and longitude attributes win."""

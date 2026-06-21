@@ -21,8 +21,12 @@ CONF_ENABLE_HOME_WEATHER = "enable_home_weather"
 CONF_ENABLE_PERSON_WEATHER = "enable_person_weather"
 CONF_ENABLE_STATION_WEATHER = "enable_station_weather"
 CONF_ENABLE_DERIVED_FORECASTS = "enable_derived_forecasts"
+CONF_LOCATION = "location"
+CONF_PLACE_QUERY = "place_query"
+CONF_PLACE_RESULT = "place_result"
 
 SENSOR_KEYS = ("t", "rh", "td", "f", "fg", "d", "p", "r")
+WEATHER_SENSOR_KEYS = ("condition", *SENSOR_KEYS)
 
 DEFAULT_SCAN_INTERVAL_MINUTES = 60
 ALERT_SCAN_INTERVAL_MINUTES = 15
