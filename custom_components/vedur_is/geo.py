@@ -57,6 +57,30 @@ def nearest_station(
     return nearest
 
 
+def nearest_stations(
+    coordinate: Coordinate,
+    stations: Iterable[Station],
+    *,
+    limit: int | None = None,
+) -> list[tuple[Station, float]]:
+    """Return stations sorted by distance from the coordinate."""
+    results = [
+        (
+            station,
+            distance_km(
+                coordinate,
+                Coordinate(station.latitude, station.longitude),
+            ),
+        )
+        for station in stations
+        if station.latitude is not None and station.longitude is not None
+    ]
+    results.sort(key=lambda item: item[1])
+    if limit is None:
+        return results
+    return results[:limit]
+
+
 def resolve_person_coordinate(
     state: str | None,
     attributes: Mapping[str, Any],

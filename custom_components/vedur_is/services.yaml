@@ -1,0 +1,30 @@
+get_forecast_for_location:
+  fields:
+    latitude:
+      required: true
+      example: 64.1466
+      selector:
+        number:
+          min: -90
+          max: 90
+          step: any
+          mode: box
+    longitude:
+      required: true
+      example: -21.9426
+      selector:
+        number:
+          min: -180
+          max: 180
+          step: any
+          mode: box
+    type:
+      required: false
+      default: hourly
+      example: hourly
+      selector:
+        select:
+          options:
+            - hourly
+            - daily
+            - twice_daily
