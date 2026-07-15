@@ -204,7 +204,7 @@ class TestVedurIsApiClient(unittest.TestCase):
             session.calls,
             [
                 (
-                    f"{BASE_URL}/observations/aws/hour/latest",
+                    f"{BASE_URL}/observations/aws/10min/latest",
                     [
                         ("parameters", "basic"),
                         ("station_id", "1470"),
@@ -220,7 +220,7 @@ class TestVedurIsApiClient(unittest.TestCase):
         """Missing official values are filled from gottvedur.is page data."""
         session = RouteSession(
             {
-                f"{BASE_URL}/observations/aws/hour/latest": [
+                f"{BASE_URL}/observations/aws/10min/latest": [
                     {
                         "station": 1474,
                         "name": "Garðabær Urriðaholt",
@@ -263,6 +263,12 @@ class TestVedurIsApiClient(unittest.TestCase):
                 fallback_station_ids=[1474],
             )
         )
+        asyncio.run(
+            client.async_get_latest_observations(
+                [1474],
+                fallback_station_ids=[1474],
+            )
+        )
 
         self.assertEqual(observations[1474].value("t"), 1.4)
         self.assertEqual(observations[1474].value("rh"), 59)
@@ -279,6 +285,14 @@ class TestVedurIsApiClient(unittest.TestCase):
         )
         self.assertEqual(
             observations[1474].value_source("r"), OBSERVATION_SOURCE_GOTTVEDUR_IS
+        )
+        fallback_url = (
+            f"{GOTTVEDUR_BASE_URL}/_next/data/test-build/en/vedur/"
+            "athuganir/1474.json"
+        )
+        self.assertEqual(
+            sum(url == fallback_url for url, _params in session.calls),
+            1,
         )
 
     def test_parse_gottvedur_observation_payload(self) -> None:

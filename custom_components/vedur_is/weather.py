@@ -293,7 +293,11 @@ class VedurIsPersonWeatherEntity(
         if precipitation is not None:
             attrs["precipitation"] = precipitation
 
-        attrs.update(_observation_diagnostics(self._observation))
+        observation = self._observation
+        if observation is not None and observation.time is not None:
+            attrs[ATTR_OBSERVATION_TIME] = observation.time.isoformat()
+
+        attrs.update(_observation_diagnostics(observation))
         attrs.update(_data_diagnostics(self.coordinator.data))
         return attrs
 

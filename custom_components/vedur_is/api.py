@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import logging
 import re
 from typing import Any
@@ -21,6 +21,7 @@ XML_FORECAST_URL = "https://xmlweather.vedur.is/"
 REQUEST_TIMEOUT_SECONDS = 10
 FORECAST_ID_CHUNK_SIZE = 80
 GOTTVEDUR_FALLBACK_CONCURRENCY = 8
+GOTTVEDUR_FALLBACK_CACHE_TTL = timedelta(hours=1)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -236,6 +237,9 @@ class VedurIsApiClient:
         """Initialize the client."""
         self._session = session
         self._gottvedur_build_id: str | None = None
+        self._gottvedur_observation_cache: dict[
+            int, tuple[datetime, Observation]
+        ] = {}
 
     async def async_get_stations(
         self,
@@ -270,7 +274,7 @@ class VedurIsApiClient:
         *,
         fallback_station_ids: Iterable[int] | None = None,
     ) -> dict[int, Observation]:
-        """Return latest hourly observations for the requested stations."""
+        """Return latest processed 10-minute observations."""
         requested_station_ids = list(
             dict.fromkeys(int(station_id) for station_id in station_ids)
         )
@@ -279,7 +283,7 @@ class VedurIsApiClient:
             ("station_id", str(station_id)) for station_id in requested_station_ids
         )
 
-        payload = await self._async_get_json("/observations/aws/hour/latest", params)
+        payload = await self._async_get_json("/observations/aws/10min/latest", params)
         if not isinstance(payload, list):
             raise InvalidResponse("Expected observation list")
 
@@ -309,6 +313,19 @@ class VedurIsApiClient:
         if not requested_station_ids:
             return {}
 
+        now = datetime.now(timezone.utc)
+        observations: dict[int, Observation] = {}
+        station_ids_to_fetch: list[int] = []
+        for station_id in requested_station_ids:
+            cached = self._gottvedur_observation_cache.get(station_id)
+            if cached is not None and now - cached[0] < GOTTVEDUR_FALLBACK_CACHE_TTL:
+                observations[station_id] = cached[1]
+            else:
+                station_ids_to_fetch.append(station_id)
+
+        if not station_ids_to_fetch:
+            return observations
+
         semaphore = asyncio.Semaphore(GOTTVEDUR_FALLBACK_CONCURRENCY)
 
         async def fetch_one(station_id: int) -> Observation | None:
@@ -316,12 +333,11 @@ class VedurIsApiClient:
                 return await self._async_get_gottvedur_latest_observation(station_id)
 
         results = await asyncio.gather(
-            *(fetch_one(station_id) for station_id in requested_station_ids),
+            *(fetch_one(station_id) for station_id in station_ids_to_fetch),
             return_exceptions=True,
         )
 
-        observations: dict[int, Observation] = {}
-        for station_id, result in zip(requested_station_ids, results, strict=True):
+        for station_id, result in zip(station_ids_to_fetch, results, strict=True):
             if isinstance(result, Exception):
                 _LOGGER.debug(
                     "Could not fetch gottvedur.is fallback for station %s: %s",
@@ -331,6 +347,10 @@ class VedurIsApiClient:
                 continue
             if result is not None:
                 observations[result.station_id] = result
+                self._gottvedur_observation_cache[result.station_id] = (
+                    now,
+                    result,
+                )
 
         return observations
 

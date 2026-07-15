@@ -30,7 +30,8 @@ Weather data is provided by the Icelandic Met Office (vedur.is).
   through the APIs used by this integration. When enabled, they are derived from
   future XML time points using period high/low temperatures, max wind, and the
   most common mapped condition in the relevant daytime or day/night period.
-- Hourly polling through a `DataUpdateCoordinator`.
+- Processed 10-minute observations, polled every 10 minutes through a
+  `DataUpdateCoordinator`.
 - Diagnostic sensors for condition, temperature, humidity, dew point, wind
   speed, wind gust, wind direction, pressure, and precipitation. These are
   created for Home, person-following, device-tracker, and selected-station
@@ -164,7 +165,7 @@ coordinate.
 ## API Endpoints Used
 
 - `GET https://api.vedur.is/weather/stations?active=true&station_type=sj`
-- `GET https://api.vedur.is/weather/observations/aws/hour/latest?parameters=basic&station_id=<id>`
+- `GET https://api.vedur.is/weather/observations/aws/10min/latest?parameters=basic&station_id=<id>`
 - `GET https://xmlweather.vedur.is/?op_w=xml&type=forec&lang=en&view=xml&ids=<ids>`
 - `GET https://gottvedur.is/_next/data/.../en/vedur/athuganir/<station>.json`
   as a fallback for missing current observation values.
@@ -173,24 +174,24 @@ coordinate.
 
 ## API Examples
 
-Fetch the latest basic hourly automatic weather observation for station `1470`
+Fetch the latest processed 10-minute automatic weather observation for station `1470`
 (`Reykjavík`):
 
 ```bash
-curl -L "https://api.vedur.is/weather/observations/aws/hour/latest?parameters=basic&station_id=1470"
+curl -L "https://api.vedur.is/weather/observations/aws/10min/latest?parameters=basic&station_id=1470"
 ```
 
 Pretty-print the same response:
 
 ```bash
-curl -L "https://api.vedur.is/weather/observations/aws/hour/latest?parameters=basic&station_id=1470" \
+curl -L "https://api.vedur.is/weather/observations/aws/10min/latest?parameters=basic&station_id=1470" \
   | python3 -m json.tool
 ```
 
-Fetch parameter metadata for the latest hourly observation endpoint:
+Fetch parameter metadata for the latest 10-minute observation endpoint:
 
 ```bash
-curl -L "https://api.vedur.is/weather/parameters?url=/observations/aws/hour/latest&locale=en" \
+curl -L "https://api.vedur.is/weather/parameters?url=/observations/aws/10min/latest&locale=en" \
   | python3 -m json.tool
 ```
 

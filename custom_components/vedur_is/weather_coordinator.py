@@ -44,6 +44,7 @@ SOURCE_FORECASTS = "forecasts"
 SOURCE_OBSERVATIONS = "observations"
 SOURCE_STATIONS = "stations"
 STATION_CACHE_TTL = timedelta(hours=12)
+FORECAST_CACHE_TTL = timedelta(hours=1)
 MAX_BACKOFF_INTERVAL = timedelta(hours=6)
 MAX_BACKOFF_JITTER = timedelta(minutes=5)
 
@@ -87,6 +88,8 @@ class VedurIsWeatherDataUpdateCoordinator(DataUpdateCoordinator[VedurIsWeatherDa
         self._failure_count = 0
         self._stations_cache: dict[int, Station] | None = None
         self._stations_fetched_at: datetime | None = None
+        self._forecasts_cache: dict[int, StationForecast] | None = None
+        self._forecasts_fetched_at: datetime | None = None
 
     async def _async_update_data(self) -> VedurIsWeatherData:
         """Fetch the latest full weather data set from vedur.is."""
@@ -119,6 +122,7 @@ class VedurIsWeatherDataUpdateCoordinator(DataUpdateCoordinator[VedurIsWeatherDa
             stale_sources,
         )
         forecasts = await self._async_get_forecasts(
+            now,
             stations_by_id,
             previous,
             source_errors,
@@ -219,6 +223,7 @@ class VedurIsWeatherDataUpdateCoordinator(DataUpdateCoordinator[VedurIsWeatherDa
 
     async def _async_get_forecasts(
         self,
+        now: datetime,
         stations_by_id: dict[int, Station],
         previous: VedurIsWeatherData | None,
         source_errors: dict[str, str],
@@ -228,14 +233,25 @@ class VedurIsWeatherDataUpdateCoordinator(DataUpdateCoordinator[VedurIsWeatherDa
         if not stations_by_id:
             return previous.forecasts if previous is not None else {}
 
+        if (
+            self._forecasts_cache is not None
+            and self._forecasts_fetched_at is not None
+            and now - self._forecasts_fetched_at < FORECAST_CACHE_TTL
+        ):
+            return self._forecasts_cache
+
         try:
-            return await self.client.async_get_forecasts(stations_by_id.keys())
+            forecasts = await self.client.async_get_forecasts(stations_by_id.keys())
         except (CannotConnect, InvalidResponse) as err:
             source_errors[SOURCE_FORECASTS] = str(err)
             stale_sources.add(SOURCE_FORECASTS)
             if previous is not None:
                 return previous.forecasts
             return {}
+
+        self._forecasts_cache = forecasts
+        self._forecasts_fetched_at = now
+        return forecasts
 
     def _record_update_result(self, source_errors: Mapping[str, str]) -> None:
         """Adjust update interval after errors to avoid hammering upstream."""
