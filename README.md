@@ -31,7 +31,9 @@ Weather data is provided by the Icelandic Met Office (vedur.is).
   future XML time points using period high/low temperatures, max wind, and the
   most common mapped condition in the relevant daytime or day/night period.
 - Processed 10-minute observations, polled every 10 minutes through a
-  `DataUpdateCoordinator`.
+  `DataUpdateCoordinator`. After the immediate startup refresh, successful
+  polls are aligned to 75 seconds after each UTC 10-minute boundary to allow
+  the Met Office processing pipeline time to publish new observations.
 - Diagnostic sensors for condition, temperature, humidity, dew point, wind
   speed, wind gust, wind direction, pressure, and precipitation. These are
   created for Home, person-following, device-tracker, and selected-station

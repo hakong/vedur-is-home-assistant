@@ -37,6 +37,7 @@ from .geo import (
     resolve_person_coordinate,
     resolve_tracker_coordinate,
 )
+from .polling import next_aligned_poll_delay
 
 _LOGGER = logging.getLogger(__name__)
 MAX_FALLBACK_OBSERVATION_DISTANCE_KM = 150.0
@@ -129,7 +130,10 @@ class VedurIsWeatherDataUpdateCoordinator(DataUpdateCoordinator[VedurIsWeatherDa
             stale_sources,
         )
 
-        self._record_update_result(source_errors)
+        self._record_update_result(
+            source_errors,
+            datetime.now(timezone.utc),
+        )
         last_successful_update = (
             now
             if not source_errors
@@ -253,11 +257,15 @@ class VedurIsWeatherDataUpdateCoordinator(DataUpdateCoordinator[VedurIsWeatherDa
         self._forecasts_fetched_at = now
         return forecasts
 
-    def _record_update_result(self, source_errors: Mapping[str, str]) -> None:
+    def _record_update_result(
+        self,
+        source_errors: Mapping[str, str],
+        completed_at: datetime,
+    ) -> None:
         """Adjust update interval after errors to avoid hammering upstream."""
         if not source_errors:
             self._failure_count = 0
-            self.update_interval = self._base_update_interval
+            self.update_interval = next_aligned_poll_delay(completed_at)
             return
 
         self._failure_count += 1
