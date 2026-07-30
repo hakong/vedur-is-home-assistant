@@ -37,7 +37,11 @@ from .geo import (
     resolve_person_coordinate,
     resolve_tracker_coordinate,
 )
-from .polling import next_aligned_poll_delay
+from .polling import (
+    MAX_BACKOFF_JITTER_SECONDS,
+    backoff_poll_delay,
+    next_aligned_poll_delay,
+)
 
 _LOGGER = logging.getLogger(__name__)
 MAX_FALLBACK_OBSERVATION_DISTANCE_KM = 150.0
@@ -46,8 +50,6 @@ SOURCE_OBSERVATIONS = "observations"
 SOURCE_STATIONS = "stations"
 STATION_CACHE_TTL = timedelta(hours=12)
 FORECAST_CACHE_TTL = timedelta(hours=1)
-MAX_BACKOFF_INTERVAL = timedelta(hours=6)
-MAX_BACKOFF_JITTER = timedelta(minutes=5)
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,7 +87,6 @@ class VedurIsWeatherDataUpdateCoordinator(DataUpdateCoordinator[VedurIsWeatherDa
             update_interval=timedelta(minutes=DEFAULT_SCAN_INTERVAL_MINUTES),
         )
         self.client = client
-        self._base_update_interval = timedelta(minutes=DEFAULT_SCAN_INTERVAL_MINUTES)
         self._failure_count = 0
         self._stations_cache: dict[int, Station] | None = None
         self._stations_fetched_at: datetime | None = None
@@ -269,15 +270,10 @@ class VedurIsWeatherDataUpdateCoordinator(DataUpdateCoordinator[VedurIsWeatherDa
             return
 
         self._failure_count += 1
-        backoff = self._base_update_interval * (2 ** min(self._failure_count, 4))
-        jitter_seconds = min(
-            MAX_BACKOFF_JITTER,
-            self._base_update_interval,
-        ).total_seconds()
-        jitter = timedelta(
-            seconds=uniform(0, jitter_seconds),
+        self.update_interval = backoff_poll_delay(
+            self._failure_count,
+            jitter_seconds=uniform(0, MAX_BACKOFF_JITTER_SECONDS),
         )
-        self.update_interval = min(backoff + jitter, MAX_BACKOFF_INTERVAL)
 
     def _fallback_station_ids(
         self,

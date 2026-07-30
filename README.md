@@ -34,6 +34,8 @@ Weather data is provided by the Icelandic Met Office (vedur.is).
   `DataUpdateCoordinator`. After the immediate startup refresh, successful
   polls are aligned to 75 seconds after each UTC 10-minute boundary to allow
   the Met Office processing pipeline time to publish new observations.
+- Transient API failures retry after approximately 2, 5, 10, 20, and 40
+  minutes before progressively backing off to a maximum of six hours.
 - Diagnostic sensors for condition, temperature, humidity, dew point, wind
   speed, wind gust, wind direction, pressure, and precipitation. These are
   created for Home, person-following, device-tracker, and selected-station
