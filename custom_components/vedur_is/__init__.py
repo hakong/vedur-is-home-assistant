@@ -45,6 +45,7 @@ async def async_setup_entry(hass: Any, entry: Any) -> bool:
         hass.config_entries.async_update_entry(entry, data=dict(entry.options))
 
     _async_remove_stale_registry_entries(hass, entry)
+    _async_enable_diagnostic_registry_entries(hass, entry)
 
     client = VedurIsApiClient(aiohttp_client.async_get_clientsession(hass))
     coordinator = VedurIsWeatherDataUpdateCoordinator(hass, client, entry)
@@ -65,6 +66,28 @@ async def async_unload_entry(hass: Any, entry: Any) -> bool:
 async def _async_update_listener(hass: Any, entry: Any) -> None:
     """Reload the entry when options change."""
     await hass.config_entries.async_reload(entry.entry_id)
+
+
+def _async_enable_diagnostic_registry_entries(hass: Any, entry: Any) -> None:
+    """Enable diagnostics previously disabled by the integration default."""
+    from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
+    from homeassistant.const import EntityCategory
+    from homeassistant.helpers import entity_registry as er
+
+    entity_registry = er.async_get(hass)
+    for entity in list(entity_registry.entities.values()):
+        if (
+            entity.config_entry_id == entry.entry_id
+            and entity.domain == SENSOR_DOMAIN
+            and entity.platform == DOMAIN
+            and entity.entity_category == EntityCategory.DIAGNOSTIC
+            and entity.disabled_by == er.RegistryEntryDisabler.INTEGRATION
+        ):
+            _LOGGER.debug(
+                "Enabling Vedur.is diagnostic sensor after default change: %s",
+                entity.entity_id,
+            )
+            entity_registry.async_update_entity(entity.entity_id, disabled_by=None)
 
 
 def _async_remove_stale_registry_entries(hass: Any, entry: Any) -> None:

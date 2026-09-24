@@ -309,7 +309,7 @@ def _location_sensors(
     coordinator: VedurIsWeatherDataUpdateCoordinator,
     source: WeatherSensorSource,
 ) -> list[VedurIsLocationSensor]:
-    """Return disabled diagnostic sensors for one weather location."""
+    """Return diagnostic sensors for one weather location."""
     return [
         VedurIsLocationSensor(coordinator, source, description)
         for description in LOCATION_SENSOR_DESCRIPTIONS
@@ -372,7 +372,7 @@ class VedurIsSensor(
 
     entity_description: VedurIsSensorEntityDescription
     _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_entity_registry_enabled_default = False
+    _attr_entity_registry_enabled_default = True
     _attr_has_entity_name = True
     _attr_attribution = ATTRIBUTION
 
@@ -457,7 +457,7 @@ class VedurIsLocationSensor(
 
     entity_description: VedurIsSensorEntityDescription
     _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_entity_registry_enabled_default = False
+    _attr_entity_registry_enabled_default = True
     _attr_has_entity_name = True
     _attr_attribution = ATTRIBUTION
 

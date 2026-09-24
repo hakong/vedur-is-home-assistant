@@ -39,8 +39,7 @@ Weather data is provided by the Icelandic Met Office (vedur.is).
 - Diagnostic sensors for condition, temperature, humidity, dew point, wind
   speed, wind gust, wind direction, pressure, and precipitation. These are
   created for Home, person-following, device-tracker, and selected-station
-  weather devices, and are disabled by default because the `weather.*`
-  entities are the primary interface.
+  weather devices and are enabled by default.
 - Station metadata is used for Home Assistant device registry entries.
 - Weather entities expose observation source diagnostics and forecast station
   metadata.
@@ -221,11 +220,11 @@ details with headline, description, timing, links, and CAP polygon data.
 
 ## Diagnostic Sensors
 
-Every weather device/location has disabled-by-default diagnostic sensors for
-its current weather values. Enable only the entities needed by dashboards,
-automations, or displays that cannot read attributes from a `weather.*` entity.
-For example, enabling **Wind speed** under the Home weather device provides a
-normal sensor entity suitable for NSPanel displays without a template sensor.
+Every weather device/location has enabled diagnostic sensors for its current
+weather values. Individual sensors can be disabled from Home Assistant's entity
+settings when they are not needed. For example, **Wind speed** under the Home
+weather device provides a normal sensor entity suitable for NSPanel displays
+without a template sensor.
 
 | API key | Sensor | Unit |
 | --- | --- | --- |

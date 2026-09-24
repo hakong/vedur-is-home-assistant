@@ -8,7 +8,8 @@ not affiliated with or endorsed by the Icelandic Met Office.
 
 The integration can create weather entities for Home, people, and selected
 stations. These are enabled by default and can be toggled in integration
-options. Selected station diagnostics are disabled by default.
+options. Current-weather diagnostic sensors are enabled by default and can be
+disabled individually from Home Assistant's entity settings.
 
 Weather entities expose metadata showing which station is used for forecasts and
 which current observation fields came from the official API, gottvedur.is
