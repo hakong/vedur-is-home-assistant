@@ -44,6 +44,10 @@ Weather data is provided by the Icelandic Met Office (vedur.is).
 - Station metadata is used for Home Assistant device registry entries.
 - Weather entities expose observation source diagnostics and forecast station
   metadata.
+- Current observations automatically use a nearby station when the nominal
+  nearest station is more than 30 minutes old. Fallback stations must be within
+  25 km of the target and no more than 15 km farther away than the preferred
+  station.
 - Weather alerts sensor for active Icelandic Met Office CAP weather warnings.
 - `vedur_is.get_forecast_for_location` action for one-off nearest-station
   forecast lookups by latitude/longitude without creating an entity.
@@ -95,6 +99,11 @@ data. Weather entities expose:
   `r` to `official_api`, `gottvedur_is`, or `unavailable`.
 - `observation_unavailable_fields`: lists observation keys that are still
   unavailable after fallback data is applied.
+- `observation_uses_nearby_station`: whether a stale or unavailable preferred
+  station was replaced by a fresh nearby station. The `preferred_observation_*`
+  attributes identify the station that would normally be used, while the
+  existing `observation_station_*` attributes identify the station actually
+  supplying current values.
 
 Station weather entities also expose forecast metadata:
 

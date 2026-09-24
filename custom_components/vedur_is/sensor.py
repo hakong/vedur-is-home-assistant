@@ -72,6 +72,11 @@ from .geo import (
     resolve_person_coordinate,
     resolve_tracker_coordinate,
 )
+from .observation_utils import (
+    ObservationStationSelection,
+    observation_selection_attributes,
+    select_observation_station,
+)
 from .weather_coordinator import VedurIsWeatherDataUpdateCoordinator
 from .weather_utils import condition_from_forecast_text, condition_from_observation
 
@@ -538,6 +543,7 @@ class VedurIsLocationSensor(
                     ATTR_OBSERVATION_STATION_DISTANCE_KM: round(distance, 2),
                 }
             )
+        attrs.update(observation_selection_attributes(self._observation_selection))
 
         forecast_station = self._nearest_forecast_station
         if forecast_station is not None:
@@ -603,23 +609,28 @@ class VedurIsLocationSensor(
     @property
     def _nearest_observation_station(self) -> tuple[Station, float] | None:
         """Return the station supplying current observations."""
+        selection = self._observation_selection
+        if selection is None:
+            return None
+        return selection.station, selection.distance_km
+
+    @property
+    def _observation_selection(self) -> ObservationStationSelection | None:
+        """Return the fresh observation station selected for this source."""
         data = self.coordinator.data
-        if data is None:
-            return None
-        if self._source.source_type == "station":
-            station = self._source.station
-            if station is None or station.station_id not in data.observations:
-                return None
-            return station, 0.0
         coordinate = self._coordinate
-        if coordinate is None:
+        if data is None or coordinate is None:
             return None
-        stations = (
-            data.stations[station_id]
-            for station_id in data.observations
-            if station_id in data.stations
+        return select_observation_station(
+            coordinate,
+            data.stations.values(),
+            data.observations,
+            preferred_station=(
+                self._source.station
+                if self._source.source_type == "station"
+                else None
+            ),
         )
-        return nearest_station(coordinate, stations)
 
     @property
     def _nearest_forecast_station(self) -> tuple[Station, float] | None:

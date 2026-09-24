@@ -30,6 +30,7 @@ from .forecast_utils import (
     twice_daily_forecast_dicts,
 )
 from .geo import Coordinate, nearest_station
+from .observation_utils import select_observation_station
 from .weather_coordinator import VedurIsWeatherData
 
 SERVICE_GET_FORECAST_FOR_LOCATION = "get_forecast_for_location"
@@ -142,12 +143,14 @@ def _nearest_observation_station(
     data: VedurIsWeatherData,
 ) -> tuple[Station, float] | None:
     """Return the nearest station with current observation data."""
-    stations = (
-        data.stations[station_id]
-        for station_id in data.observations
-        if station_id in data.stations
+    selection = select_observation_station(
+        coordinate,
+        data.stations.values(),
+        data.observations,
     )
-    return nearest_station(coordinate, stations)
+    if selection is None:
+        return None
+    return selection.station, selection.distance_km
 
 
 def _nearest_forecast_station(

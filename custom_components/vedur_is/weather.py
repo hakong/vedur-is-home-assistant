@@ -66,6 +66,11 @@ from .forecast_utils import (
     hourly_forecast_dicts,
     twice_daily_forecast_dicts,
 )
+from .observation_utils import (
+    ObservationStationSelection,
+    observation_selection_attributes,
+    select_observation_station,
+)
 from .weather_coordinator import VedurIsWeatherDataUpdateCoordinator
 from .weather_utils import condition_from_forecast_text, condition_from_observation
 
@@ -278,6 +283,7 @@ class VedurIsPersonWeatherEntity(
                     ),
                 }
             )
+        attrs.update(observation_selection_attributes(self._observation_selection))
 
         if forecast_station is not None:
             station, station_distance = forecast_station
@@ -351,15 +357,23 @@ class VedurIsPersonWeatherEntity(
     @property
     def _nearest_observation_station(self) -> tuple[Station, float] | None:
         """Return the nearest station with a current observation."""
-        if self.coordinator.data is None or self._person_coordinate is None:
+        selection = self._observation_selection
+        if selection is None:
             return None
+        return selection.station, selection.distance_km
 
-        stations = (
-            self.coordinator.data.stations[station_id]
-            for station_id in self.coordinator.data.observations
-            if station_id in self.coordinator.data.stations
+    @property
+    def _observation_selection(self) -> ObservationStationSelection | None:
+        """Return the fresh observation station selected for this location."""
+        data = self.coordinator.data
+        coordinate = self._person_coordinate
+        if data is None or coordinate is None:
+            return None
+        return select_observation_station(
+            coordinate,
+            data.stations.values(),
+            data.observations,
         )
-        return nearest_station(self._person_coordinate, stations)
 
     @property
     def _nearest_forecast_station(self) -> tuple[Station, float] | None:
@@ -602,11 +616,23 @@ class VedurIsStationWeatherEntity(
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return station metadata for the station weather entity."""
         observation = self._observation
+        observation_result = self._nearest_observation_station
         attrs: dict[str, Any] = {
             ATTR_STATION_ID: self._station.station_id,
-            ATTR_OBSERVATION_STATION_ID: self._station.station_id,
-            ATTR_OBSERVATION_STATION_NAME: self._station.name,
         }
+        if observation_result is not None:
+            observation_station, observation_distance = observation_result
+            attrs.update(
+                {
+                    ATTR_OBSERVATION_STATION_ID: observation_station.station_id,
+                    ATTR_OBSERVATION_STATION_NAME: observation_station.name,
+                    ATTR_OBSERVATION_STATION_DISTANCE_KM: round(
+                        observation_distance,
+                        2,
+                    ),
+                }
+            )
+        attrs.update(observation_selection_attributes(self._observation_selection))
 
         forecast_result = self._nearest_forecast_station
         station_forecast = self._forecast
@@ -662,10 +688,34 @@ class VedurIsStationWeatherEntity(
 
     @property
     def _observation(self) -> Observation | None:
-        """Return the observation for this station."""
-        if self.coordinator.data is None:
+        """Return a fresh observation for this station or a nearby fallback."""
+        data = self.coordinator.data
+        selection = self._observation_selection
+        if data is None or selection is None:
             return None
-        return self.coordinator.data.observations.get(self._station.station_id)
+        return data.observations.get(selection.station.station_id)
+
+    @property
+    def _nearest_observation_station(self) -> tuple[Station, float] | None:
+        """Return the station supplying current observations."""
+        selection = self._observation_selection
+        if selection is None:
+            return None
+        return selection.station, selection.distance_km
+
+    @property
+    def _observation_selection(self) -> ObservationStationSelection | None:
+        """Return the fresh observation station selected for this station."""
+        data = self.coordinator.data
+        station_coordinate = _station_coordinate(self._station)
+        if data is None or station_coordinate is None:
+            return None
+        return select_observation_station(
+            station_coordinate,
+            data.stations.values(),
+            data.observations,
+            preferred_station=self._station,
+        )
 
     @property
     def _forecast(self) -> StationForecast | None:

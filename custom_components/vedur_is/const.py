@@ -53,5 +53,11 @@ ATTR_FORECAST_USES_NEARBY_STATION = "forecast_uses_nearby_station"
 ATTR_OBSERVATION_STATION_DISTANCE_KM = "observation_station_distance_km"
 ATTR_OBSERVATION_STATION_ID = "observation_station_id"
 ATTR_OBSERVATION_STATION_NAME = "observation_station_name"
+ATTR_OBSERVATION_USES_NEARBY_STATION = "observation_uses_nearby_station"
+ATTR_PREFERRED_OBSERVATION_STATION_DISTANCE_KM = (
+    "preferred_observation_station_distance_km"
+)
+ATTR_PREFERRED_OBSERVATION_STATION_ID = "preferred_observation_station_id"
+ATTR_PREFERRED_OBSERVATION_STATION_NAME = "preferred_observation_station_name"
 ATTR_OBSERVATION_SOURCE = "observation_source"
 ATTR_STATION_HAS_DIRECT_FORECAST = "station_has_direct_forecast"
