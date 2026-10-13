@@ -133,7 +133,7 @@ SENSOR_DESCRIPTIONS: tuple[VedurIsSensorEntityDescription, ...] = (
         key="d",
         translation_key="wind_direction",
         native_unit_of_measurement=DEGREE,
-        state_class=SensorStateClass.MEASUREMENT,
+        state_class=SensorStateClass.MEASUREMENT_ANGLE,
     ),
     VedurIsSensorEntityDescription(
         key="p",
