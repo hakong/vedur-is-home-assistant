@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 import logging
+from math import isfinite
 import re
 from typing import Any
 import xml.etree.ElementTree as ET
@@ -22,6 +23,9 @@ REQUEST_TIMEOUT_SECONDS = 10
 FORECAST_ID_CHUNK_SIZE = 80
 GOTTVEDUR_FALLBACK_CONCURRENCY = 8
 GOTTVEDUR_FALLBACK_CACHE_TTL = timedelta(hours=1)
+GOTTVEDUR_FORECAST_CACHE_TTL = timedelta(hours=1)
+GOTTVEDUR_FORECAST_ERROR_TTL = timedelta(minutes=15)
+GOTTVEDUR_FORECAST_CONCURRENCY = 4
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -167,6 +171,15 @@ class ForecastPoint:
 
 
 @dataclass(frozen=True, slots=True)
+class ForecastPrecipitation:
+    """Precipitation amount in mm over an interval ending at the source time."""
+
+    start: datetime
+    end: datetime
+    amount: float | None
+
+
+@dataclass(frozen=True, slots=True)
 class StationForecast:
     """XML forecast data for one station."""
 
@@ -175,6 +188,7 @@ class StationForecast:
     generated_at: datetime | None
     link: str | None
     forecasts: tuple[ForecastPoint, ...]
+    precipitation: tuple[ForecastPrecipitation, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,6 +254,10 @@ class VedurIsApiClient:
         self._gottvedur_observation_cache: dict[
             int, tuple[datetime, Observation]
         ] = {}
+        self._gottvedur_forecast_cache: dict[
+            int, tuple[datetime, tuple[ForecastPrecipitation, ...] | None]
+        ] = {}
+        self._gottvedur_forecast_lock = asyncio.Lock()
 
     async def async_get_stations(
         self,
@@ -377,6 +395,54 @@ class VedurIsApiClient:
             forecasts.update(parse_forecasts_xml(payload))
 
         return forecasts
+
+    async def async_enrich_forecast_precipitation(
+        self,
+        forecasts: Mapping[int, StationForecast],
+        station_ids: Iterable[int],
+    ) -> dict[int, StationForecast]:
+        """Add cached Gottveður amounts only for stations being used."""
+        enriched = dict(forecasts)
+        requested_ids = set(station_ids) & forecasts.keys()
+        async with self._gottvedur_forecast_lock:
+            now = datetime.now(timezone.utc)
+            semaphore = asyncio.Semaphore(GOTTVEDUR_FORECAST_CONCURRENCY)
+
+            async def fetch_one(station_id: int) -> None:
+                cached = self._gottvedur_forecast_cache.get(station_id)
+                ttl = (
+                    GOTTVEDUR_FORECAST_ERROR_TTL
+                    if cached is not None and cached[1] is None
+                    else GOTTVEDUR_FORECAST_CACHE_TTL
+                )
+                if cached is not None and now - cached[0] < ttl:
+                    return
+                async with semaphore:
+                    try:
+                        payload = await self._async_get_json_url(
+                            f"{GOTTVEDUR_BASE_URL}/api/forecasts/highChart/",
+                            [("stationId", str(station_id))],
+                        )
+                        amounts = parse_gottvedur_forecast_precipitation(payload)
+                    except (CannotConnect, InvalidResponse, ValueError) as err:
+                        _LOGGER.debug(
+                            "Gottveður forecast precipitation unavailable for %s: %s",
+                            station_id,
+                            err,
+                        )
+                        amounts = None
+                    self._gottvedur_forecast_cache[station_id] = (now, amounts)
+
+            await asyncio.gather(
+                *(fetch_one(station_id) for station_id in requested_ids)
+            )
+            for station_id in requested_ids:
+                amounts = self._gottvedur_forecast_cache[station_id][1]
+                enriched[station_id] = replace(
+                    forecasts[station_id],
+                    precipitation=amounts or (),
+                )
+        return enriched
 
     async def async_get_weather_alerts(
         self,
@@ -609,6 +675,62 @@ def parse_forecasts_xml(payload: str) -> dict[int, StationForecast]:
         )
 
     return forecasts
+
+
+def parse_gottvedur_forecast_precipitation(
+    payload: Any,
+) -> tuple[ForecastPrecipitation, ...]:
+    """Parse the chart's one-, three-, and six-hour interval amounts.
+
+    Gottveður labels amounts using the preceding time step. The first IG point
+    covers one hour; unknown models and unsupported gaps have no usable amount.
+    """
+    if not isinstance(payload, Mapping) or not isinstance(
+        payload.get("nextDays"), list
+    ):
+        raise InvalidResponse("Missing Gottveður forecast chart data")
+
+    points: dict[datetime, Mapping[str, Any]] = {}
+    for item in payload["nextDays"]:
+        if not isinstance(item, Mapping):
+            raise InvalidResponse("Invalid Gottveður forecast chart point")
+        timestamp = _parse_datetime(item.get("time"))
+        if timestamp is None:
+            raise InvalidResponse("Missing Gottveður forecast time")
+        if timestamp.tzinfo is not None:
+            timestamp = timestamp.astimezone(timezone.utc).replace(tzinfo=None)
+        if timestamp in points:
+            raise InvalidResponse("Duplicate Gottveður forecast time")
+        points[timestamp] = item
+
+    ordered = sorted(points.items())
+    amounts: list[ForecastPrecipitation] = []
+    for index, (timestamp, item) in enumerate(ordered):
+        model = item.get("model")
+        duration = timestamp - ordered[index - 1][0] if index else None
+        if model == "ig":
+            if duration is not None and duration != timedelta(hours=1):
+                continue
+            duration = timedelta(hours=1)
+        elif model == "ecm-is":
+            if duration is None and len(ordered) > 1:
+                duration = ordered[1][0] - timestamp
+            if duration not in (timedelta(hours=3), timedelta(hours=6)):
+                continue
+        else:
+            continue
+
+        value = item.get("precipitation")
+        amount = None
+        if (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and isfinite(value)
+            and value >= 0
+        ):
+            amount = float(value)
+        amounts.append(ForecastPrecipitation(timestamp - duration, timestamp, amount))
+    return tuple(amounts)
 
 
 def parse_gottvedur_observation_payload(payload: Mapping[str, Any]) -> Observation:

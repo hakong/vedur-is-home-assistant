@@ -304,6 +304,7 @@ class VedurIsPersonWeatherEntity(
             attrs[ATTR_OBSERVATION_TIME] = observation.time.isoformat()
 
         attrs.update(_observation_diagnostics(observation))
+        attrs.update(_forecast_precipitation_attributes(self._forecast))
         attrs.update(_data_diagnostics(self.coordinator.data))
         return attrs
 
@@ -313,7 +314,11 @@ class VedurIsPersonWeatherEntity(
         if station_forecast is None:
             return []
 
-        return _ha_forecasts(hourly_forecast_dicts(station_forecast.forecasts))
+        return _ha_forecasts(
+            hourly_forecast_dicts(
+                station_forecast.forecasts, precipitation=station_forecast.precipitation
+            )
+        )
 
     async def async_forecast_daily(self) -> list[Forecast] | None:
         """Return daily forecasts for the person's nearest forecast station."""
@@ -321,7 +326,11 @@ class VedurIsPersonWeatherEntity(
         if station_forecast is None:
             return []
 
-        return _ha_forecasts(daily_forecast_dicts(station_forecast.forecasts))
+        return _ha_forecasts(
+            daily_forecast_dicts(
+                station_forecast.forecasts, precipitation=station_forecast.precipitation
+            )
+        )
 
     async def async_forecast_twice_daily(self) -> list[Forecast] | None:
         """Return twice-daily forecasts for the nearest forecast station."""
@@ -329,7 +338,11 @@ class VedurIsPersonWeatherEntity(
         if station_forecast is None:
             return []
 
-        return _ha_forecasts(twice_daily_forecast_dicts(station_forecast.forecasts))
+        return _ha_forecasts(
+            twice_daily_forecast_dicts(
+                station_forecast.forecasts, precipitation=station_forecast.precipitation
+            )
+        )
 
     @property
     def _forecast(self) -> StationForecast | None:
@@ -659,6 +672,7 @@ class VedurIsStationWeatherEntity(
             and forecast_result[0].station_id != self._station.station_id
         )
         attrs.update(_observation_diagnostics(observation))
+        attrs.update(_forecast_precipitation_attributes(self._forecast))
         attrs.update(_data_diagnostics(self.coordinator.data))
         return attrs
 
@@ -668,7 +682,11 @@ class VedurIsStationWeatherEntity(
         if station_forecast is None:
             return []
 
-        return _ha_forecasts(hourly_forecast_dicts(station_forecast.forecasts))
+        return _ha_forecasts(
+            hourly_forecast_dicts(
+                station_forecast.forecasts, precipitation=station_forecast.precipitation
+            )
+        )
 
     async def async_forecast_daily(self) -> list[Forecast] | None:
         """Return daily forecasts for the station."""
@@ -676,7 +694,11 @@ class VedurIsStationWeatherEntity(
         if station_forecast is None:
             return []
 
-        return _ha_forecasts(daily_forecast_dicts(station_forecast.forecasts))
+        return _ha_forecasts(
+            daily_forecast_dicts(
+                station_forecast.forecasts, precipitation=station_forecast.precipitation
+            )
+        )
 
     async def async_forecast_twice_daily(self) -> list[Forecast] | None:
         """Return twice-daily forecasts for the station."""
@@ -684,7 +706,11 @@ class VedurIsStationWeatherEntity(
         if station_forecast is None:
             return []
 
-        return _ha_forecasts(twice_daily_forecast_dicts(station_forecast.forecasts))
+        return _ha_forecasts(
+            twice_daily_forecast_dicts(
+                station_forecast.forecasts, precipitation=station_forecast.precipitation
+            )
+        )
 
     @property
     def _observation(self) -> Observation | None:
@@ -844,6 +870,18 @@ def _observation_diagnostics(observation: Observation | None) -> dict[str, Any]:
             for key, source in sources.items()
             if source == OBSERVATION_SOURCE_UNAVAILABLE
         ],
+    }
+
+
+def _forecast_precipitation_attributes(forecast: StationForecast | None) -> dict[str, Any]:
+    """Identify the amount source and accumulation intervals independently of XML."""
+    intervals = forecast.precipitation if forecast is not None else ()
+    return {
+        "forecast_precipitation_source": "gottvedur_is" if intervals else None,
+        "forecast_precipitation_interval_hours": sorted({
+            (interval.end - interval.start).total_seconds() / 3600
+            for interval in intervals
+        }),
     }
 
 

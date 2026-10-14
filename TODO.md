@@ -45,6 +45,8 @@ Future ideas and follow-up work for the Vedur.is Home Assistant integration.
 
 ## Forecast Improvements
 
+- Recheck precipitation probability if a provider adds a documented probability
+  field. Current Gottveður forecast responses provide amounts, not probabilities.
 - Add tests around stations without direct XML forecasts using a nearby
   forecast-capable station.
 - Add tests for forecast distance and fallback metadata.

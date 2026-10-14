@@ -7,7 +7,7 @@ from collections.abc import Iterable
 from datetime import datetime, time, timedelta
 from typing import Any
 
-from .api import ForecastPoint
+from .api import ForecastPoint, ForecastPrecipitation
 from .weather_utils import (
     CONDITION_CLEAR_NIGHT,
     CONDITION_CLOUDY,
@@ -46,10 +46,18 @@ _CONDITION_PRIORITY = {
 def hourly_forecast_dicts(
     points: Iterable[ForecastPoint],
     now: datetime | None = None,
+    *,
+    precipitation: Iterable[ForecastPrecipitation] = (),
 ) -> list[ForecastDict]:
     """Return Home Assistant hourly forecast dictionaries."""
-    return [
-        {
+    hourly_amounts = {
+        interval.end: interval.amount
+        for interval in precipitation
+        if interval.end - interval.start == timedelta(hours=1)
+    }
+    forecasts = []
+    for forecast in _future_points(points, now):
+        item = {
             "datetime": forecast.time.isoformat(),
             "condition": condition_from_forecast_text(
                 forecast.weather_text,
@@ -59,13 +67,17 @@ def hourly_forecast_dicts(
             "native_wind_speed": forecast.wind_speed,
             "wind_bearing": forecast.wind_bearing,
         }
-        for forecast in _future_points(points, now)
-    ]
+        if (amount := hourly_amounts.get(forecast.time)) is not None:
+            item["native_precipitation"] = amount
+        forecasts.append(item)
+    return forecasts
 
 
 def daily_forecast_dicts(
     points: Iterable[ForecastPoint],
     now: datetime | None = None,
+    *,
+    precipitation: Iterable[ForecastPrecipitation] = (),
 ) -> list[ForecastDict]:
     """Aggregate Vedur XML time points into daily forecast dictionaries."""
     groups: dict[datetime, list[ForecastPoint]] = {}
@@ -74,6 +86,7 @@ def daily_forecast_dicts(
         groups.setdefault(day_start, []).append(point)
 
     forecasts: list[ForecastDict] = []
+    intervals = tuple(precipitation)
     for day_start in sorted(groups):
         day_points = sorted(groups[day_start], key=lambda point: point.time)
         target = day_start.replace(hour=12)
@@ -98,6 +111,9 @@ def daily_forecast_dicts(
         if windy is not None:
             forecast["native_wind_speed"] = windy.wind_speed
             forecast["wind_bearing"] = windy.wind_bearing
+        amount = _precipitation_total(intervals, day_start, day_start + timedelta(days=1))
+        if amount is not None:
+            forecast["native_precipitation"] = amount
         forecasts.append(forecast)
 
     return forecasts
@@ -106,6 +122,8 @@ def daily_forecast_dicts(
 def twice_daily_forecast_dicts(
     points: Iterable[ForecastPoint],
     now: datetime | None = None,
+    *,
+    precipitation: Iterable[ForecastPrecipitation] = (),
 ) -> list[ForecastDict]:
     """Aggregate Vedur XML time points into day/night forecast dictionaries."""
     groups: dict[tuple[datetime, bool], list[ForecastPoint]] = {}
@@ -114,6 +132,7 @@ def twice_daily_forecast_dicts(
         groups.setdefault((segment_start, is_daytime), []).append(point)
 
     forecasts: list[ForecastDict] = []
+    intervals = tuple(precipitation)
     for segment_start, is_daytime in sorted(groups):
         segment_points = sorted(
             groups[(segment_start, is_daytime)],
@@ -137,9 +156,44 @@ def twice_daily_forecast_dicts(
         if windy is not None:
             forecast["native_wind_speed"] = windy.wind_speed
             forecast["wind_bearing"] = windy.wind_bearing
+        hours = (
+            TWICE_DAILY_NIGHT_START_HOUR - TWICE_DAILY_DAY_START_HOUR
+            if is_daytime
+            else 24 - TWICE_DAILY_NIGHT_START_HOUR + TWICE_DAILY_DAY_START_HOUR
+        )
+        amount = _precipitation_total(
+            intervals,
+            segment_start,
+            segment_start + timedelta(hours=hours),
+        )
+        if amount is not None:
+            forecast["native_precipitation"] = amount
         forecasts.append(forecast)
 
     return forecasts
+
+
+def _precipitation_total(
+    intervals: tuple[ForecastPrecipitation, ...],
+    start: datetime,
+    end: datetime,
+) -> float | None:
+    """Sum a completely covered period, without guessing across gaps or edges."""
+    cursor = start
+    total = 0.0
+    for interval in sorted(intervals, key=lambda interval: interval.start):
+        if interval.end <= start or interval.start >= end:
+            continue
+        if (
+            interval.start != cursor
+            or interval.end > end
+            or interval.end <= interval.start
+            or interval.amount is None
+        ):
+            return None
+        total += interval.amount
+        cursor = interval.end
+    return round(total, 6) if cursor == end else None
 
 
 def _future_points(

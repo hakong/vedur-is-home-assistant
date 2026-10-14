@@ -19,6 +19,7 @@ from homeassistant.helpers import aiohttp_client
 
 from .api import (
     ForecastPoint,
+    ForecastPrecipitation,
     Observation,
     Station,
     VedurIsApiClient,
@@ -78,7 +79,18 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             raise HomeAssistantError("No Vedur forecast station is available")
 
         forecast_station, forecast_distance = forecast_result
-        station_forecast = data.forecasts[forecast_station.station_id]
+        client = next(
+            (
+                entry.runtime_data.client
+                for entry in hass.config_entries.async_entries(DOMAIN)
+                if getattr(entry, "runtime_data", None) is not None
+            ),
+            None,
+        ) or VedurIsApiClient(aiohttp_client.async_get_clientsession(hass))
+        enriched = await client.async_enrich_forecast_precipitation(
+            data.forecasts, [forecast_station.station_id]
+        )
+        station_forecast = enriched[forecast_station.station_id]
         response: ServiceResponse = {
             ATTR_FORECAST_STATION: _station_response(
                 forecast_station,
@@ -87,6 +99,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             ATTR_FORECAST: _forecast_response(
                 station_forecast.forecasts,
                 forecast_type,
+                precipitation=station_forecast.precipitation,
             ),
         }
 
@@ -195,13 +208,15 @@ def _observation_response(observation: Observation) -> dict[str, Any]:
 def _forecast_response(
     points: Iterable[ForecastPoint],
     forecast_type: str,
+    *,
+    precipitation: Iterable[ForecastPrecipitation] = (),
 ) -> list[dict[str, Any]]:
     """Return forecast dictionaries for the requested forecast type."""
     if forecast_type == FORECAST_TYPE_DAILY:
-        return daily_forecast_dicts(points)
+        return daily_forecast_dicts(points, precipitation=precipitation)
     if forecast_type == FORECAST_TYPE_TWICE_DAILY:
-        return twice_daily_forecast_dicts(points)
-    return hourly_forecast_dicts(points)
+        return twice_daily_forecast_dicts(points, precipitation=precipitation)
+    return hourly_forecast_dicts(points, precipitation=precipitation)
 
 
 def _json_safe_mapping(values: Iterable[tuple[str, Any]] | Any) -> dict[str, Any]:

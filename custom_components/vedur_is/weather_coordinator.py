@@ -130,6 +130,10 @@ class VedurIsWeatherDataUpdateCoordinator(DataUpdateCoordinator[VedurIsWeatherDa
             source_errors,
             stale_sources,
         )
+        forecasts = await self.client.async_enrich_forecast_precipitation(
+            forecasts,
+            self._precipitation_forecast_station_ids(stations_by_id, forecasts),
+        )
 
         self._record_update_result(
             source_errors,
@@ -274,6 +278,53 @@ class VedurIsWeatherDataUpdateCoordinator(DataUpdateCoordinator[VedurIsWeatherDa
             self._failure_count,
             jitter_seconds=uniform(0, MAX_BACKOFF_JITTER_SECONDS),
         )
+
+    def _precipitation_forecast_station_ids(
+        self,
+        stations_by_id: dict[int, Station],
+        forecasts: dict[int, StationForecast],
+    ) -> set[int]:
+        """Select forecast stations used by enabled locations and station devices."""
+        candidates = [
+            stations_by_id[station_id]
+            for station_id in forecasts
+            if station_id in stations_by_id
+        ]
+        entry_config = self.config_entry.options or self.config_entry.data
+        selected_ids: set[int] = set()
+
+        def select(coordinate: Coordinate | None) -> None:
+            if coordinate is None:
+                return
+            nearest = nearest_station(coordinate, candidates)
+            if nearest is not None:
+                selected_ids.add(nearest[0].station_id)
+
+        if entry_config.get(CONF_ENABLE_STATION_WEATHER, True):
+            for station_id in entry_config.get(CONF_STATION_IDS, []):
+                station = stations_by_id.get(int(station_id))
+                if station is not None:
+                    if station.station_id in forecasts:
+                        selected_ids.add(station.station_id)
+                    elif station.latitude is not None and station.longitude is not None:
+                        select(Coordinate(station.latitude, station.longitude))
+
+        if (
+            entry_config.get(CONF_ENABLE_HOME_WEATHER, True)
+            and (home := self.hass.states.get("zone.home")) is not None
+        ):
+            select(_coordinate_from_state(home))
+
+        if entry_config.get(CONF_ENABLE_PERSON_WEATHER, True):
+            zones = _zones_by_name(self.hass)
+            for person in self.hass.states.async_all("person"):
+                select(resolve_person_coordinate(person.state, person.attributes, zones))
+
+        if entry_config.get(CONF_ENABLE_DEVICE_TRACKER_WEATHER, True):
+            for entity_id in entry_config.get(CONF_DEVICE_TRACKER_ENTITY_IDS, []):
+                if (tracker := self.hass.states.get(entity_id)) is not None:
+                    select(resolve_tracker_coordinate(tracker.attributes))
+        return selected_ids
 
     def _fallback_station_ids(
         self,

@@ -25,6 +25,8 @@ Weather data is provided by the Icelandic Met Office (vedur.is).
   integration options.
 - Hourly forecasts through `weather.get_forecasts`, using Vedur.is XML forecast
   time points.
+- Forecast precipitation from Gottveður's structured chart data, with hourly
+  amounts and complete daily/day-night totals when the source intervals allow it.
 - Optional daily and twice-daily forecasts. These are disabled by default
   because Vedur.is does not expose native daily or twice-daily forecast products
   through the APIs used by this integration. When enabled, they are derived from
@@ -123,6 +125,49 @@ Hourly forecasts come directly from Vedur.is XML forecast time points. Daily
 and twice-daily forecasts are optional derived summaries made by this
 integration; when that option is enabled, weather entities add a note to their
 Home Assistant attribution text.
+
+### Forecast Precipitation
+
+Forecast precipitation is fetched from Gottveður's public chart endpoint for
+the forecast stations used by Home, people, selected stations, and configured
+trackers. One-off location lookups also include it. Requests are cached for one
+hour per station; failed requests have a separate 15-minute retry cooldown and
+do not interrupt observations or the XML forecast.
+
+```bash
+curl --fail --silent --show-error \
+  'https://gottvedur.is/api/forecasts/highChart/?stationId=1474'
+```
+
+The `nextDays` points include `time`, `model`, and `precipitation`. Precipitation
+is an amount in millimeters over the interval ending at that timestamp, not a
+probability or a cumulative counter. Gottveður's chart labels the amount using
+the preceding time step: one hour initially, then three or six hours farther
+ahead. The integration retains those intervals separately from XML time points.
+
+- Hourly forecasts expose `precipitation` only for matching one-hour intervals.
+  A value at 13:00 covers 12:00–13:00 UTC. Three- and six-hour amounts are not
+  presented as hourly amounts or divided into invented hourly predictions.
+- Daily precipitation is the sum of intervals covering the full UTC calendar
+  day. The interval ending at midnight belongs to the preceding day. Complete
+  three- and six-hour intervals are included once, without multiplying by their
+  duration.
+- Twice-daily totals cover 08:00–18:00 and 18:00–08:00 UTC. When a longer source
+  interval crosses those boundaries, the total remains unknown rather than
+  dividing the amount between periods.
+- Missing/null/invalid amounts, gaps, overlaps, or incomplete period coverage
+  leave precipitation absent (unknown). This often applies to the current and
+  last forecast days. A confirmed zero amount is still returned as `0`.
+
+Weather entities expose `forecast_precipitation_source` (`gottvedur_is` when
+interval data is available) and `forecast_precipitation_interval_hours`.
+Home Assistant converts `native_precipitation` to the entity's selected unit
+in `weather.get_forecasts` responses.
+
+Precipitation probability was checked separately: no such field was found in
+the Gottveður chart or detailed forecast responses, or the official weather API
+schema inspected on October 14, 2026. `precipitation_probability` is therefore
+not supplied; humidity, rain icons, and amounts are not used to invent it.
 
 ## Station Selection
 
