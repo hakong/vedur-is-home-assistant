@@ -75,7 +75,7 @@ def _async_enable_diagnostic_registry_entries(hass: Any, entry: Any) -> None:
     from homeassistant.helpers import entity_registry as er
 
     entity_registry = er.async_get(hass)
-    for entity in list(entity_registry.entities.values()):
+    for entity in er.async_entries_for_config_entry(entity_registry, entry.entry_id):
         if (
             entity.config_entry_id == entry.entry_id
             and entity.domain == SENSOR_DOMAIN
@@ -134,13 +134,13 @@ def _async_remove_stale_registry_entries(hass: Any, entry: Any) -> None:
             configured_station_ids,
         )
 
-    for device in list(device_registry.devices.values()):
+    for device in dr.async_entries_for_config_entry(device_registry, entry.entry_id):
         vedur_identifiers = [
             identifier
             for identifier in device.identifiers
             if identifier[0] == DOMAIN
         ]
-        if not vedur_identifiers or entry.entry_id not in device.config_entries:
+        if not vedur_identifiers:
             continue
 
         station_id = vedur_identifiers[0][1]
@@ -192,7 +192,10 @@ def _async_remove_device_tracker_weather_registry_entries(
     entry: Any,
 ) -> None:
     """Remove all device tracker weather entities for a config entry."""
-    for entity in list(entity_registry.entities.values()):
+    from homeassistant.helpers import device_registry as dr
+    from homeassistant.helpers import entity_registry as er
+
+    for entity in er.async_entries_for_config_entry(entity_registry, entry.entry_id):
         if (
             entity.config_entry_id == entry.entry_id
             and entity.platform == DOMAIN
@@ -205,10 +208,7 @@ def _async_remove_device_tracker_weather_registry_entries(
             )
             entity_registry.async_remove(entity.entity_id)
 
-    for device in list(device_registry.devices.values()):
-        if entry.entry_id not in device.config_entries:
-            continue
-
+    for device in dr.async_entries_for_config_entry(device_registry, entry.entry_id):
         if any(
             identifier[0] == DOMAIN
             and str(identifier[1]).startswith("device_tracker_weather:")
@@ -264,7 +264,10 @@ def _async_remove_person_weather_registry_entries(
     entry: Any,
 ) -> None:
     """Remove person-following weather entities for a config entry."""
-    for entity in list(entity_registry.entities.values()):
+    from homeassistant.helpers import device_registry as dr
+    from homeassistant.helpers import entity_registry as er
+
+    for entity in er.async_entries_for_config_entry(entity_registry, entry.entry_id):
         if (
             entity.config_entry_id == entry.entry_id
             and entity.platform == DOMAIN
@@ -277,10 +280,7 @@ def _async_remove_person_weather_registry_entries(
             )
             entity_registry.async_remove(entity.entity_id)
 
-    for device in list(device_registry.devices.values()):
-        if entry.entry_id not in device.config_entries:
-            continue
-
+    for device in dr.async_entries_for_config_entry(device_registry, entry.entry_id):
         if any(
             identifier[0] == DOMAIN
             and str(identifier[1]).startswith("person_weather:")
@@ -302,6 +302,8 @@ def _async_remove_home_weather_registry_entries(
     from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
     from homeassistant.components.weather import DOMAIN as WEATHER_DOMAIN
 
+    from .registry import async_get_entry_device
+
     entity_id = entity_registry.async_get_entity_id(
         WEATHER_DOMAIN,
         DOMAIN,
@@ -319,8 +321,10 @@ def _async_remove_home_weather_registry_entries(
         if entity_id:
             entity_registry.async_remove(entity_id)
 
-    device = device_registry.async_get_device(identifiers={(DOMAIN, "home_weather")})
-    if device and entry.entry_id in device.config_entries:
+    device = async_get_entry_device(
+        device_registry, entry.entry_id, (DOMAIN, "home_weather")
+    )
+    if device:
         _LOGGER.debug("Removing Vedur.is Home weather device: %s", device.name)
         device_registry.async_remove_device(device.id)
 
@@ -334,6 +338,8 @@ def _async_remove_selected_station_registry_entries(
     """Remove selected station entities and devices for a config entry."""
     from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
     from homeassistant.components.weather import DOMAIN as WEATHER_DOMAIN
+
+    from .registry import async_get_entry_device
 
     for station_id in station_ids:
         for key in WEATHER_SENSOR_KEYS:
@@ -361,7 +367,9 @@ def _async_remove_selected_station_registry_entries(
             )
             entity_registry.async_remove(entity_id)
 
-        device = device_registry.async_get_device(identifiers={(DOMAIN, station_id)})
-        if device and entry.entry_id in device.config_entries:
+        device = async_get_entry_device(
+            device_registry, entry.entry_id, (DOMAIN, station_id)
+        )
+        if device:
             _LOGGER.debug("Removing Vedur.is station device: %s", device.name)
             device_registry.async_remove_device(device.id)

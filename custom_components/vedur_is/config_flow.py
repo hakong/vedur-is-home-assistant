@@ -34,6 +34,7 @@ from .const import (
     WEATHER_SENSOR_KEYS,
 )
 from .geo import Coordinate, nearest_stations
+from .registry import async_get_entry_device
 
 NEARBY_STATION_LIMIT = 12
 PLACE_SEARCH_LIMIT = 5
@@ -588,10 +589,13 @@ class VedurIsOptionsFlow(config_entries.OptionsFlow):
         if not enable_device_tracker_weather:
             removed_device_tracker_entity_ids = current_device_tracker_entity_ids
 
-        _async_remove_station_registry_entries(self.hass, removed_ids)
+        _async_remove_station_registry_entries(
+            self.hass, removed_ids, config_entry_id=self._config_entry.entry_id
+        )
         _async_remove_device_tracker_registry_entries(
             self.hass,
             removed_device_tracker_entity_ids,
+            config_entry_id=self._config_entry.entry_id,
         )
         self.hass.config_entries.async_update_entry(
             self._config_entry,
@@ -1027,7 +1031,7 @@ def _stored_stations(entry: ConfigEntry) -> dict[int, Station]:
 
 
 def _async_remove_station_registry_entries(
-    hass: HomeAssistant, station_ids: list[int]
+    hass: HomeAssistant, station_ids: list[int], *, config_entry_id: str
 ) -> None:
     """Remove entity and device registry entries for removed stations."""
     entity_registry = er.async_get(hass)
@@ -1055,8 +1059,8 @@ def _async_remove_station_registry_entries(
         if entity_id:
             entity_registry.async_remove(entity_id)
 
-        device = device_registry.async_get_device(
-            identifiers={(DOMAIN, station_id_str)}
+        device = async_get_entry_device(
+            device_registry, config_entry_id, (DOMAIN, station_id_str)
         )
         if device:
             device_registry.async_remove_device(device.id)
@@ -1065,6 +1069,8 @@ def _async_remove_station_registry_entries(
 def _async_remove_device_tracker_registry_entries(
     hass: HomeAssistant,
     tracker_entity_ids: list[str],
+    *,
+    config_entry_id: str,
 ) -> None:
     """Remove entity and device registry entries for removed device trackers."""
     entity_registry = er.async_get(hass)
@@ -1090,8 +1096,10 @@ def _async_remove_device_tracker_registry_entries(
             if entity_id:
                 entity_registry.async_remove(entity_id)
 
-        device = device_registry.async_get_device(
-            identifiers={(DOMAIN, f"device_tracker_weather:{tracker_entity_id}")}
+        device = async_get_entry_device(
+            device_registry,
+            config_entry_id,
+            (DOMAIN, f"device_tracker_weather:{tracker_entity_id}"),
         )
         if device:
             device_registry.async_remove_device(device.id)
