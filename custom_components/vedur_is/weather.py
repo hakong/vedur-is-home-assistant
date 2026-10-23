@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any
 
 from homeassistant.components.weather import (
@@ -75,8 +74,13 @@ from .observation_utils import (
     select_observation_station,
 )
 from .weather_coordinator import VedurIsWeatherDataUpdateCoordinator
-from .weather_utils import condition_from_forecast_text, condition_from_observation
-from .time_utils import utc_isoformat
+from .weather_utils import (
+    condition_from_forecast_point,
+    condition_from_observation,
+    current_station_forecast_point,
+    forecast_condition_attributes,
+)
+from .time_utils import utc_isoformat, utc_now
 
 MAX_OBSERVATION_DISTANCE_KM = 150.0
 HOURLY_FORECAST_FEATURES = WeatherEntityFeature.FORECAST_HOURLY
@@ -218,16 +222,19 @@ class VedurIsPersonWeatherEntity(
     @property
     def condition(self) -> str | None:
         """Return the current weather condition."""
+        observation = self._observation
+        if observation is not None and (
+            observed := condition_from_observation(observation)
+        ) is not None:
+            return observed
         forecast_point = self._current_forecast_point
         if forecast_point is not None:
-            return condition_from_forecast_text(
-                forecast_point.weather_text,
-                forecast_point.time,
+            result = self._nearest_forecast_station
+            return condition_from_forecast_point(
+                forecast_point, result[0] if result is not None else None,
+                at_time=utc_now(),
             )
 
-        observation = self._observation
-        if observation is not None:
-            return condition_from_observation(observation)
         return None
 
     @property
@@ -305,6 +312,12 @@ class VedurIsPersonWeatherEntity(
             attrs[ATTR_OBSERVATION_TIME] = observation.time.isoformat()
 
         attrs.update(_observation_diagnostics(observation))
+        attrs.update(forecast_condition_attributes(
+            self._current_forecast_point,
+            forecast_station[0] if forecast_station is not None else None,
+            observation=observation,
+            observation_station=observation_station[0] if observation_station is not None else None,
+        ))
         attrs.update(_forecast_precipitation_attributes(self._forecast))
         attrs.update(_data_diagnostics(self.coordinator.data))
         return attrs
@@ -317,7 +330,8 @@ class VedurIsPersonWeatherEntity(
 
         return _ha_forecasts(
             hourly_forecast_dicts(
-                station_forecast.forecasts, precipitation=station_forecast.precipitation
+                station_forecast.forecasts, precipitation=station_forecast.precipitation,
+                station=self._nearest_forecast_station[0],
             )
         )
 
@@ -329,7 +343,8 @@ class VedurIsPersonWeatherEntity(
 
         return _ha_forecasts(
             daily_forecast_dicts(
-                station_forecast.forecasts, precipitation=station_forecast.precipitation
+                station_forecast.forecasts, precipitation=station_forecast.precipitation,
+                station=self._nearest_forecast_station[0],
             )
         )
 
@@ -341,13 +356,14 @@ class VedurIsPersonWeatherEntity(
 
         return _ha_forecasts(
             twice_daily_forecast_dicts(
-                station_forecast.forecasts, precipitation=station_forecast.precipitation
+                station_forecast.forecasts, precipitation=station_forecast.precipitation,
+                station=self._nearest_forecast_station[0],
             )
         )
 
     @property
     def _forecast(self) -> StationForecast | None:
-        """Return the XML forecast for the nearest forecast station."""
+        """Return the preferred product for the nearest forecast station."""
         station_result = self._nearest_forecast_station
         if station_result is None or self.coordinator.data is None:
             return None
@@ -422,11 +438,7 @@ class VedurIsPersonWeatherEntity(
         if station_forecast is None:
             return None
 
-        now = datetime.now()
-        for forecast in station_forecast.forecasts:
-            if forecast.time >= now:
-                return forecast
-        return station_forecast.forecasts[-1]
+        return current_station_forecast_point(station_forecast)
 
     def _observation_value(self, key: str) -> float | None:
         """Return a numeric observation value."""
@@ -576,16 +588,19 @@ class VedurIsStationWeatherEntity(
     @property
     def condition(self) -> str | None:
         """Return the current weather condition."""
+        observation = self._observation
+        if observation is not None and (
+            observed := condition_from_observation(observation)
+        ) is not None:
+            return observed
         forecast_point = self._current_forecast_point
         if forecast_point is not None:
-            return condition_from_forecast_text(
-                forecast_point.weather_text,
-                forecast_point.time,
+            result = self._nearest_forecast_station
+            return condition_from_forecast_point(
+                forecast_point, result[0] if result is not None else None,
+                at_time=utc_now(),
             )
 
-        observation = self._observation
-        if observation is not None:
-            return condition_from_observation(observation)
         return None
 
     @property
@@ -671,6 +686,12 @@ class VedurIsStationWeatherEntity(
             and forecast_result[0].station_id != self._station.station_id
         )
         attrs.update(_observation_diagnostics(observation))
+        attrs.update(forecast_condition_attributes(
+            self._current_forecast_point,
+            forecast_result[0] if forecast_result is not None else None,
+            observation=observation,
+            observation_station=observation_result[0] if observation_result is not None else None,
+        ))
         attrs.update(_forecast_precipitation_attributes(self._forecast))
         attrs.update(_data_diagnostics(self.coordinator.data))
         return attrs
@@ -683,7 +704,8 @@ class VedurIsStationWeatherEntity(
 
         return _ha_forecasts(
             hourly_forecast_dicts(
-                station_forecast.forecasts, precipitation=station_forecast.precipitation
+                station_forecast.forecasts, precipitation=station_forecast.precipitation,
+                station=self._nearest_forecast_station[0],
             )
         )
 
@@ -695,7 +717,8 @@ class VedurIsStationWeatherEntity(
 
         return _ha_forecasts(
             daily_forecast_dicts(
-                station_forecast.forecasts, precipitation=station_forecast.precipitation
+                station_forecast.forecasts, precipitation=station_forecast.precipitation,
+                station=self._nearest_forecast_station[0],
             )
         )
 
@@ -707,7 +730,8 @@ class VedurIsStationWeatherEntity(
 
         return _ha_forecasts(
             twice_daily_forecast_dicts(
-                station_forecast.forecasts, precipitation=station_forecast.precipitation
+                station_forecast.forecasts, precipitation=station_forecast.precipitation,
+                station=self._nearest_forecast_station[0],
             )
         )
 
@@ -744,7 +768,7 @@ class VedurIsStationWeatherEntity(
 
     @property
     def _forecast(self) -> StationForecast | None:
-        """Return the nearest XML forecast for this station."""
+        """Return the preferred product for the nearest forecast station."""
         station_result = self._nearest_forecast_station
         if station_result is None or self.coordinator.data is None:
             return None
@@ -783,11 +807,7 @@ class VedurIsStationWeatherEntity(
         if station_forecast is None:
             return None
 
-        now = datetime.now()
-        for forecast in station_forecast.forecasts:
-            if forecast.time >= now:
-                return forecast
-        return station_forecast.forecasts[-1]
+        return current_station_forecast_point(station_forecast)
 
     def _observation_value(self, key: str) -> float | None:
         """Return a numeric observation value."""

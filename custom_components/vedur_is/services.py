@@ -100,6 +100,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                 station_forecast.forecasts,
                 forecast_type,
                 precipitation=station_forecast.precipitation,
+                station=forecast_station,
             ),
         }
 
@@ -211,13 +212,14 @@ def _forecast_response(
     forecast_type: str,
     *,
     precipitation: Iterable[ForecastPrecipitation] = (),
+    station: Station | None = None,
 ) -> list[dict[str, Any]]:
     """Return forecast dictionaries for the requested forecast type."""
     if forecast_type == FORECAST_TYPE_DAILY:
-        return daily_forecast_dicts(points, precipitation=precipitation)
+        return daily_forecast_dicts(points, precipitation=precipitation, station=station)
     if forecast_type == FORECAST_TYPE_TWICE_DAILY:
-        return twice_daily_forecast_dicts(points, precipitation=precipitation)
-    return hourly_forecast_dicts(points, precipitation=precipitation)
+        return twice_daily_forecast_dicts(points, precipitation=precipitation, station=station)
+    return hourly_forecast_dicts(points, precipitation=precipitation, station=station)
 
 
 def _json_safe_mapping(values: Iterable[tuple[str, Any]] | Any) -> dict[str, Any]:

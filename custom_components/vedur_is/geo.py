@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from math import asin, cos, radians, sin, sqrt
+from math import asin, cos, isfinite, radians, sin, sqrt
 from typing import Any
 
 from .api import Station
@@ -18,6 +18,19 @@ class Coordinate:
 
     latitude: float
     longitude: float
+
+
+def coordinate_from_values(latitude: Any, longitude: Any) -> Coordinate | None:
+    """Parse only finite, geographically valid latitude and longitude values."""
+    if isinstance(latitude, bool) or isinstance(longitude, bool):
+        return None
+    try:
+        lat, lon = float(latitude), float(longitude)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not isfinite(lat) or not isfinite(lon) or not -90 <= lat <= 90 or not -180 <= lon <= 180:
+        return None
+    return Coordinate(lat, lon)
 
 
 def distance_km(first: Coordinate, second: Coordinate) -> float:

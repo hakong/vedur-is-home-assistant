@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
+import json
 import logging
 from math import isfinite
 import re
@@ -46,6 +47,7 @@ _GOTTVEDUR_OBSERVATION_FIELD_MAP = {
     "pressure": "p",
     "visibility": "v",
     "cloudCover": "n",
+    "icon": "icon",
 }
 
 
@@ -193,13 +195,16 @@ class Observation:
 
 @dataclass(frozen=True, slots=True)
 class ForecastPoint:
-    """One XML forecast time point."""
+    """One provider forecast instant, retaining its raw condition and source."""
 
     time: datetime
     temperature: float | None
     wind_speed: float | None
-    wind_bearing: str | None
+    wind_bearing: float | str | None
     weather_text: str | None
+    icon: str | None = None
+    source: str = "xml"
+    model: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -213,7 +218,7 @@ class ForecastPrecipitation:
 
 @dataclass(frozen=True, slots=True)
 class StationForecast:
-    """XML forecast data for one station."""
+    """Station forecast points with interval amounts and an optional XML fallback."""
 
     station_id: int
     name: str
@@ -221,6 +226,7 @@ class StationForecast:
     link: str | None
     forecasts: tuple[ForecastPoint, ...]
     precipitation: tuple[ForecastPrecipitation, ...] = ()
+    xml_forecasts: tuple[ForecastPoint, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -289,6 +295,7 @@ class VedurIsApiClient:
         self._gottvedur_forecast_cache: dict[
             int, tuple[datetime, tuple[ForecastPrecipitation, ...] | None]
         ] = {}
+        self._gottvedur_forecast_points: dict[int, tuple[ForecastPoint, ...]] = {}
         self._gottvedur_forecast_lock = asyncio.Lock()
 
     async def async_get_stations(
@@ -433,7 +440,7 @@ class VedurIsApiClient:
         forecasts: Mapping[int, StationForecast],
         station_ids: Iterable[int],
     ) -> dict[int, StationForecast]:
-        """Add cached Gottveður amounts only for stations being used."""
+        """Reuse one cached chart response for conditions, values, and amounts."""
         enriched = dict(forecasts)
         requested_ids = set(station_ids) & forecasts.keys()
         async with self._gottvedur_forecast_lock:
@@ -456,6 +463,7 @@ class VedurIsApiClient:
                             [("stationId", str(station_id))],
                         )
                         amounts = parse_gottvedur_forecast_precipitation(payload)
+                        points = parse_gottvedur_forecast_points(payload)
                     except (CannotConnect, InvalidResponse, ValueError) as err:
                         _LOGGER.debug(
                             "Gottveður forecast precipitation unavailable for %s: %s",
@@ -463,15 +471,32 @@ class VedurIsApiClient:
                             err,
                         )
                         amounts = None
+                        points = ()
                     self._gottvedur_forecast_cache[station_id] = (now, amounts)
+                    self._gottvedur_forecast_points[station_id] = points
 
             await asyncio.gather(
                 *(fetch_one(station_id) for station_id in requested_ids)
             )
             for station_id in requested_ids:
                 amounts = self._gottvedur_forecast_cache[station_id][1]
+                original = forecasts[station_id]
+                xml_forecasts = original.xml_forecasts or original.forecasts
+                xml_points = {point.time: point for point in xml_forecasts}
+                points = tuple(
+                    replace(
+                        point,
+                        weather_text=xml_points[point.time].weather_text
+                        if point.time in xml_points
+                        else None,
+                    )
+                    for point in self._gottvedur_forecast_points.get(station_id, ())
+                )
                 enriched[station_id] = replace(
                     forecasts[station_id],
+                    forecasts=points or xml_forecasts,
+                    xml_forecasts=xml_forecasts,
+                    generated_at=None if points else original.generated_at,
                     precipitation=amounts or (),
                 )
         return enriched
@@ -560,6 +585,8 @@ class VedurIsApiClient:
                 if response.status == 204:
                     return None
                 return await response.json(content_type=None)
+        except (json.JSONDecodeError, UnicodeDecodeError) as err:
+            raise InvalidResponse("Invalid JSON response from vedur.is") from err
         except TimeoutError as err:
             raise CannotConnect("Timed out connecting to vedur.is") from err
         except aiohttp.ClientError as err:
@@ -667,6 +694,8 @@ def parse_forecasts_xml(payload: str) -> dict[int, StationForecast]:
         root = ET.fromstring(payload)
     except ET.ParseError as err:
         raise InvalidResponse("Invalid XML forecast response") from err
+    if root.tag != "forecasts" or root.find("error") is not None:
+        raise InvalidResponse("XML forecast service returned an error")
 
     forecasts: dict[int, StationForecast] = {}
     for station_element in root.findall("station"):
@@ -685,12 +714,13 @@ def parse_forecasts_xml(payload: str) -> dict[int, StationForecast]:
             if forecast_time is None:
                 continue
 
+            wind_bearing = _optional_str(_text(forecast_element, "D"))
             forecast_points.append(
                 ForecastPoint(
-                    time=forecast_time,
+                    time=utc_naive(forecast_time),
                     temperature=_optional_float(_text(forecast_element, "T")),
                     wind_speed=_optional_float(_text(forecast_element, "F")),
-                    wind_bearing=_optional_str(_text(forecast_element, "D")),
+                    wind_bearing=None if wind_bearing in {"Calm", "Logn"} else wind_bearing,
                     weather_text=_optional_str(_text(forecast_element, "W")),
                 )
             )
@@ -707,6 +737,48 @@ def parse_forecasts_xml(payload: str) -> dict[int, StationForecast]:
         )
 
     return forecasts
+
+
+def parse_gottvedur_forecast_points(payload: Any) -> tuple[ForecastPoint, ...]:
+    """Read complete chart points; amount-only responses cannot replace XML."""
+    if not isinstance(payload, Mapping) or not isinstance(
+        payload.get("nextDays"), list
+    ):
+        raise InvalidResponse("Missing Gottveður forecast chart data")
+    points: dict[datetime, ForecastPoint] = {}
+    for item in payload["nextDays"]:
+        if not isinstance(item, Mapping):
+            raise InvalidResponse("Invalid Gottveður forecast chart point")
+        timestamp = _parse_datetime(item.get("time"))
+        if timestamp is None:
+            raise InvalidResponse("Missing Gottveður forecast time")
+        timestamp = utc_naive(timestamp)
+        if timestamp in points:
+            raise InvalidResponse("Duplicate Gottveður forecast time")
+        if not {"icon", "temperature", "windSpeed", "windDirection"} <= item.keys():
+            continue
+
+        def number(key: str) -> float | None:
+            value = item.get(key)
+            if isinstance(value, bool):
+                return None
+            try:
+                result = float(value)
+            except (TypeError, ValueError, OverflowError):
+                return None
+            return result if isfinite(result) else None
+
+        points[timestamp] = ForecastPoint(
+            time=timestamp,
+            temperature=number("temperature"),
+            wind_speed=number("windSpeed"),
+            wind_bearing=number("windDirection"),
+            weather_text=None,
+            icon=_optional_str(item.get("icon")),
+            source=OBSERVATION_SOURCE_GOTTVEDUR_IS,
+            model=_optional_str(item.get("model")),
+        )
+    return tuple(points[timestamp] for timestamp in sorted(points))
 
 
 def parse_gottvedur_forecast_precipitation(

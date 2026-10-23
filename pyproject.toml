@@ -10,7 +10,8 @@ dependencies = [
 [project.optional-dependencies]
 test = [
   "pytest>=8.0",
-  "pytest-asyncio>=1.0"
+  "pytest-asyncio>=1.0",
+  "astral>=2.2,<4"
 ]
 homeassistant = [
   "homeassistant>=2026.1.0"

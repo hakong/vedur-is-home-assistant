@@ -6,10 +6,10 @@ from datetime import datetime
 from typing import Any
 import unittest
 
+from custom_components.vedur_is.api import Station
 from custom_components.vedur_is.weather_utils import (
     CONDITION_CLEAR_NIGHT,
     CONDITION_CLOUDY,
-    CONDITION_EXCEPTIONAL,
     CONDITION_FOG,
     CONDITION_PARTLY_CLOUDY,
     CONDITION_POURING,
@@ -17,7 +17,6 @@ from custom_components.vedur_is.weather_utils import (
     CONDITION_SNOWY,
     CONDITION_SNOWY_RAINY,
     CONDITION_SUNNY,
-    CONDITION_WINDY,
     condition_from_forecast_text,
     condition_from_observation,
 )
@@ -33,6 +32,9 @@ class FakeObservation:
     def value(self, key: str) -> Any:
         """Return an observation value."""
         return self._values.get(key)
+
+    def value_time(self, key: str) -> datetime:
+        return datetime.now()
 
 
 class TestWeatherUtils(unittest.TestCase):
@@ -69,12 +71,14 @@ class TestWeatherUtils(unittest.TestCase):
             "Slydduél": CONDITION_SNOWY_RAINY,
             "Fog": CONDITION_FOG,
             "Heavy rain": CONDITION_POURING,
-            "Something unexpected": CONDITION_EXCEPTIONAL,
+            "Something unexpected": None,
         }
 
         for text, condition in cases.items():
             with self.subTest(text=text):
-                self.assertEqual(condition_from_forecast_text(text), condition)
+                self.assertEqual(condition_from_forecast_text(
+                    text, datetime(2026, 5, 4, 12), station=STATION,
+                ), condition)
 
     def test_clear_sky_at_night_maps_to_clear_night(self) -> None:
         """Clear sky uses clear-night during night hours."""
@@ -82,25 +86,18 @@ class TestWeatherUtils(unittest.TestCase):
             condition_from_forecast_text(
                 "Clear sky",
                 datetime(2026, 5, 4, 23, 0, 0),
+                station=STATION,
             ),
             CONDITION_CLEAR_NIGHT,
         )
 
     def test_observation_condition_mapping(self) -> None:
-        """Observation fallback is conservative but useful."""
-        self.assertEqual(
-            condition_from_observation(FakeObservation({"r": 0.2, "t": 4})),
-            CONDITION_RAINY,
-        )
-        self.assertEqual(
-            condition_from_observation(FakeObservation({"r": 0.2, "t": -1})),
-            CONDITION_SNOWY,
-        )
-        self.assertEqual(
-            condition_from_observation(FakeObservation({"f": 18})),
-            CONDITION_WINDY,
-        )
-        self.assertEqual(
-            condition_from_observation(FakeObservation({})),
-            CONDITION_EXCEPTIONAL,
-        )
+        """Measurements do not establish current weather type."""
+        for values in ({"r": 0.2, "t": 4}, {"r": 0.2, "t": -1}, {"f": 18}, {}):
+            self.assertIsNone(condition_from_observation(FakeObservation(values)))
+        self.assertEqual(condition_from_observation(
+            FakeObservation({"icon": "ClearSkyNight"}),
+        ), CONDITION_CLEAR_NIGHT)
+
+
+STATION = Station(1470, "Reykjavik", None, "sj", 64.13, -21.91, 60, "IMO", None)

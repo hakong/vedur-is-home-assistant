@@ -7,12 +7,15 @@ from collections.abc import Iterable
 from datetime import datetime, time, timedelta
 from typing import Any
 
-from .api import ForecastPoint, ForecastPrecipitation
+from .api import ForecastPoint, ForecastPrecipitation, Station
+from .time_utils import utc_isoformat, utc_naive, utc_now
 from .weather_utils import (
     CONDITION_CLEAR_NIGHT,
     CONDITION_CLOUDY,
     CONDITION_EXCEPTIONAL,
     CONDITION_FOG,
+    CONDITION_HAIL,
+    CONDITION_LIGHTNING,
     CONDITION_PARTLY_CLOUDY,
     CONDITION_POURING,
     CONDITION_RAINY,
@@ -20,7 +23,7 @@ from .weather_utils import (
     CONDITION_SNOWY_RAINY,
     CONDITION_SUNNY,
     CONDITION_WINDY,
-    condition_from_forecast_text,
+    condition_from_forecast_point,
 )
 
 ForecastDict = dict[str, Any]
@@ -29,6 +32,8 @@ TWICE_DAILY_DAY_START_HOUR = 8
 TWICE_DAILY_NIGHT_START_HOUR = 18
 
 _CONDITION_PRIORITY = {
+    CONDITION_LIGHTNING: 100,
+    CONDITION_HAIL: 95,
     CONDITION_POURING: 90,
     CONDITION_SNOWY_RAINY: 85,
     CONDITION_SNOWY: 80,
@@ -48,6 +53,7 @@ def hourly_forecast_dicts(
     now: datetime | None = None,
     *,
     precipitation: Iterable[ForecastPrecipitation] = (),
+    station: Station | None = None,
 ) -> list[ForecastDict]:
     """Return Home Assistant hourly forecast dictionaries."""
     hourly_amounts = {
@@ -58,11 +64,8 @@ def hourly_forecast_dicts(
     forecasts = []
     for forecast in _future_points(points, now):
         item = {
-            "datetime": forecast.time.isoformat(),
-            "condition": condition_from_forecast_text(
-                forecast.weather_text,
-                forecast.time,
-            ),
+            "datetime": utc_isoformat(forecast.time),
+            "condition": condition_from_forecast_point(forecast, station),
             "native_temperature": forecast.temperature,
             "native_wind_speed": forecast.wind_speed,
             "wind_bearing": forecast.wind_bearing,
@@ -78,6 +81,7 @@ def daily_forecast_dicts(
     now: datetime | None = None,
     *,
     precipitation: Iterable[ForecastPrecipitation] = (),
+    station: Station | None = None,
 ) -> list[ForecastDict]:
     """Aggregate Vedur XML time points into daily forecast dictionaries."""
     groups: dict[datetime, list[ForecastPoint]] = {}
@@ -95,15 +99,13 @@ def daily_forecast_dicts(
             target,
             preferred_start=8,
             preferred_end=22,
+            station=station,
         )
         windy = _max_by(day_points, "wind_speed")
 
         forecast: ForecastDict = {
-            "datetime": day_start.isoformat(),
-            "condition": condition_from_forecast_text(
-                representative.weather_text,
-                representative.time,
-            ),
+            "datetime": utc_isoformat(day_start),
+            "condition": condition_from_forecast_point(representative, station),
         }
         if temperatures := _values(day_points, "temperature"):
             forecast["native_temperature"] = max(temperatures)
@@ -124,6 +126,7 @@ def twice_daily_forecast_dicts(
     now: datetime | None = None,
     *,
     precipitation: Iterable[ForecastPrecipitation] = (),
+    station: Station | None = None,
 ) -> list[ForecastDict]:
     """Aggregate Vedur XML time points into day/night forecast dictionaries."""
     groups: dict[tuple[datetime, bool], list[ForecastPoint]] = {}
@@ -139,15 +142,12 @@ def twice_daily_forecast_dicts(
             key=lambda point: point.time,
         )
         target = _segment_target(segment_start, is_daytime)
-        representative = _representative_condition_point(segment_points, target)
+        representative = _representative_condition_point(segment_points, target, station=station)
         windy = _max_by(segment_points, "wind_speed")
 
         forecast: ForecastDict = {
-            "datetime": segment_start.isoformat(),
-            "condition": condition_from_forecast_text(
-                representative.weather_text,
-                representative.time,
-            ),
+            "datetime": utc_isoformat(segment_start),
+            "condition": condition_from_forecast_point(representative, station),
             "is_daytime": is_daytime,
         }
         if temperatures := _values(segment_points, "temperature"):
@@ -200,7 +200,7 @@ def _future_points(
     points: Iterable[ForecastPoint],
     now: datetime | None,
 ) -> list[ForecastPoint]:
-    cutoff = _forecast_cutoff(now or datetime.now())
+    cutoff = _forecast_cutoff(utc_naive(now) if now is not None else utc_now())
     return sorted(
         (point for point in points if point.time >= cutoff),
         key=lambda point: point.time,
@@ -240,25 +240,25 @@ def _representative_condition_point(
     *,
     preferred_start: int | None = None,
     preferred_end: int | None = None,
+    station: Station | None = None,
 ) -> ForecastPoint:
     preferred_points = _preferred_condition_points(
         points,
         preferred_start,
         preferred_end,
     )
+    known = [point for point in preferred_points if condition_from_forecast_point(point, station) is not None]
+    preferred_points = known or preferred_points
     condition_counts = Counter(
-        condition_from_forecast_text(point.weather_text, point.time)
+        condition_from_forecast_point(point, station)
         for point in preferred_points
     )
     return max(
         preferred_points,
         key=lambda point: (
-            condition_counts[condition_from_forecast_text(
-                point.weather_text,
-                point.time,
-            )],
+            condition_counts[condition_from_forecast_point(point, station)],
             -abs(point.time - target).total_seconds(),
-            _condition_priority(point),
+            _condition_priority(point, station),
         ),
     )
 
@@ -279,9 +279,9 @@ def _preferred_condition_points(
     return preferred or points
 
 
-def _condition_priority(point: ForecastPoint) -> int:
+def _condition_priority(point: ForecastPoint, station: Station | None) -> int:
     return _CONDITION_PRIORITY.get(
-        condition_from_forecast_text(point.weather_text, point.time),
+        condition_from_forecast_point(point, station),
         0,
     )
 

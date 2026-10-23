@@ -5,12 +5,14 @@ from __future__ import annotations
 from datetime import datetime
 import unittest
 
-from custom_components.vedur_is.api import ForecastPoint
+from custom_components.vedur_is.api import ForecastPoint, Station
 from custom_components.vedur_is.forecast_utils import (
     daily_forecast_dicts,
     hourly_forecast_dicts,
     twice_daily_forecast_dicts,
 )
+
+STATION = Station(1470, "Reykjavik", None, "sj", 64.13, -21.91, 60, "IMO", None)
 
 
 def _point(
@@ -44,9 +46,9 @@ class TestForecastUtils(unittest.TestCase):
 
     def test_hourly_forecast_dicts(self) -> None:
         """Hourly forecast dictionaries preserve each XML point."""
-        forecasts = hourly_forecast_dicts(POINTS[:1], now=datetime(2026, 5, 5, 0, 30))
+        forecasts = hourly_forecast_dicts(POINTS[:1], now=datetime(2026, 5, 5, 0, 30), station=STATION)
 
-        self.assertEqual(forecasts[0]["datetime"], "2026-05-05T00:00:00")
+        self.assertEqual(forecasts[0]["datetime"], "2026-05-05T00:00:00+00:00")
         self.assertEqual(forecasts[0]["condition"], "clear-night")
         self.assertEqual(forecasts[0]["native_temperature"], 1)
         self.assertEqual(forecasts[0]["native_wind_speed"], 2)
@@ -56,7 +58,7 @@ class TestForecastUtils(unittest.TestCase):
         forecasts = daily_forecast_dicts(POINTS, now=datetime(2026, 5, 5, 0, 30))
 
         self.assertEqual(len(forecasts), 2)
-        self.assertEqual(forecasts[0]["datetime"], "2026-05-05T00:00:00")
+        self.assertEqual(forecasts[0]["datetime"], "2026-05-05T00:00:00+00:00")
         self.assertEqual(forecasts[0]["condition"], "rainy")
         self.assertEqual(forecasts[0]["native_temperature"], 7)
         self.assertEqual(forecasts[0]["native_templow"], 1)
@@ -70,9 +72,9 @@ class TestForecastUtils(unittest.TestCase):
             now=datetime(2026, 5, 5, 0, 30),
         )
 
-        self.assertEqual(forecasts[0]["datetime"], "2026-05-04T18:00:00")
+        self.assertEqual(forecasts[0]["datetime"], "2026-05-04T18:00:00+00:00")
         self.assertFalse(forecasts[0]["is_daytime"])
-        self.assertEqual(forecasts[1]["datetime"], "2026-05-05T08:00:00")
+        self.assertEqual(forecasts[1]["datetime"], "2026-05-05T08:00:00+00:00")
         self.assertTrue(forecasts[1]["is_daytime"])
         self.assertEqual(forecasts[1]["condition"], "rainy")
         self.assertEqual(forecasts[1]["native_temperature"], 7)
@@ -82,7 +84,7 @@ class TestForecastUtils(unittest.TestCase):
         """Hourly forecasts do not return points older than the current hour."""
         forecasts = hourly_forecast_dicts(POINTS, now=datetime(2026, 5, 5, 7, 15))
 
-        self.assertEqual(forecasts[0]["datetime"], "2026-05-05T12:00:00")
+        self.assertEqual(forecasts[0]["datetime"], "2026-05-05T12:00:00+00:00")
 
     def test_daily_condition_uses_common_daytime_weather(self) -> None:
         """Daily condition is based on common daytime weather."""
@@ -118,7 +120,7 @@ class TestForecastUtils(unittest.TestCase):
             _point("2026-06-12T21:00:00", 18, 2, "S", "Clear sky"),
         )
 
-        forecasts = daily_forecast_dicts(points, now=datetime(2026, 6, 12, 0, 0))
+        forecasts = daily_forecast_dicts(points, now=datetime(2026, 6, 12, 0, 0), station=STATION)
 
         self.assertEqual(forecasts[0]["condition"], "sunny")
 
@@ -142,6 +144,7 @@ class TestForecastUtils(unittest.TestCase):
         forecasts = twice_daily_forecast_dicts(
             points,
             now=datetime(2026, 6, 12, 0, 0),
+            station=STATION,
         )
 
         self.assertEqual(forecasts[1]["condition"], "sunny")
@@ -159,13 +162,14 @@ class TestForecastUtils(unittest.TestCase):
         forecasts = twice_daily_forecast_dicts(
             points,
             now=datetime(2026, 6, 12, 0, 0),
+            station=STATION,
         )
 
-        self.assertEqual(forecasts[0]["datetime"], "2026-06-11T18:00:00")
+        self.assertEqual(forecasts[0]["datetime"], "2026-06-11T18:00:00+00:00")
         self.assertFalse(forecasts[0]["is_daytime"])
         self.assertEqual(forecasts[0]["condition"], "cloudy")
-        self.assertEqual(forecasts[1]["datetime"], "2026-06-12T08:00:00")
+        self.assertEqual(forecasts[1]["datetime"], "2026-06-12T08:00:00+00:00")
         self.assertTrue(forecasts[1]["is_daytime"])
         self.assertEqual(forecasts[1]["condition"], "sunny")
-        self.assertEqual(forecasts[2]["datetime"], "2026-06-12T18:00:00")
+        self.assertEqual(forecasts[2]["datetime"], "2026-06-12T18:00:00+00:00")
         self.assertFalse(forecasts[2]["is_daytime"])

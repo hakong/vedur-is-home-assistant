@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
 import logging
 from typing import Any
 
@@ -83,8 +82,13 @@ from .observation_utils import (
     select_observation_station,
 )
 from .weather_coordinator import VedurIsWeatherDataUpdateCoordinator
-from .weather_utils import condition_from_forecast_text, condition_from_observation
-from .time_utils import utc_isoformat
+from .weather_utils import (
+    condition_from_forecast_point,
+    condition_from_observation,
+    current_station_forecast_point,
+    forecast_condition_attributes,
+)
+from .time_utils import utc_isoformat, utc_now
 
 _LOGGER = logging.getLogger(__name__)
 MAX_OBSERVATION_DISTANCE_KM = 150.0
@@ -578,19 +582,31 @@ class VedurIsLocationSensor(
         if self.entity_description.key == "r":
             attrs.update(precipitation_attributes(observation))
         attrs.update(_data_diagnostics(self.coordinator.data))
+        if self.entity_description.key == "condition":
+            attrs.update(forecast_condition_attributes(
+                self._current_forecast_point,
+                forecast_station[0] if forecast_station is not None else None,
+                observation=observation,
+                observation_station=observation_station[0] if observation_station is not None else None,
+            ))
+            attrs.pop(ATTR_OBSERVATION_TIME, None)
         return attrs
 
     @property
     def _condition(self) -> str | None:
         """Return the current mapped weather condition."""
+        observation = self._observation
+        if observation is not None and (
+            observed := condition_from_observation(observation)
+        ) is not None:
+            return observed
         forecast_point = self._current_forecast_point
         if forecast_point is not None:
-            return condition_from_forecast_text(
-                forecast_point.weather_text,
-                forecast_point.time,
+            result = self._nearest_forecast_station
+            return condition_from_forecast_point(
+                forecast_point, result[0] if result is not None else None,
+                at_time=utc_now(),
             )
-        if self._observation is not None:
-            return condition_from_observation(self._observation)
         return None
 
     @property
@@ -678,11 +694,7 @@ class VedurIsLocationSensor(
         station_forecast = data.forecasts.get(station_result[0].station_id)
         if station_forecast is None or not station_forecast.forecasts:
             return None
-        now = datetime.now()
-        for forecast in station_forecast.forecasts:
-            if forecast.time >= now:
-                return forecast
-        return station_forecast.forecasts[-1]
+        return current_station_forecast_point(station_forecast)
 
     def _device_info(self, source: WeatherSensorSource) -> DeviceInfo:
         """Return device registry metadata matching the weather entity."""

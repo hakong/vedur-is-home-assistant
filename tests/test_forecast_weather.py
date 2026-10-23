@@ -1,9 +1,11 @@
 """Forecast precipitation checks using Home Assistant entity classes."""
 
 from datetime import datetime, timedelta
+from dataclasses import replace
 from importlib.util import find_spec
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 HAS_HOME_ASSISTANT = find_spec("homeassistant") is not None
 if HAS_HOME_ASSISTANT:
@@ -12,6 +14,7 @@ if HAS_HOME_ASSISTANT:
     from custom_components.vedur_is.api import (
         ForecastPoint,
         ForecastPrecipitation,
+        Observation,
         Station,
         StationForecast,
     )
@@ -25,6 +28,9 @@ if HAS_HOME_ASSISTANT:
     from custom_components.vedur_is.weather_coordinator import (
         VedurIsWeatherData,
         VedurIsWeatherDataUpdateCoordinator,
+    )
+    from custom_components.vedur_is.sensor import (
+        CONDITION_SENSOR_DESCRIPTION, VedurIsLocationSensor, WeatherSensorSource,
     )
 
 
@@ -105,6 +111,7 @@ class TestWeatherForecastPrecipitation(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(select(), {1474})
+
         self.entry.data.update(
             {
                 "enable_home_weather": False,
@@ -116,6 +123,56 @@ class TestWeatherForecastPrecipitation(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(select(), set())
         self.entry.data.update({"enable_station_weather": True, "station_ids": [1]})
         self.assertEqual(select(), {1474})
+
+    async def test_weather_and_diagnostic_conditions_share_provider_and_solar_fallback(self):
+        now = datetime.now().replace(second=0, microsecond=0)
+        point = ForecastPoint(now, 5, 2, 90, "Rain", "ClearSkyNight", "gottvedur_is")
+        forecast = replace(self.forecast, forecasts=(point,))
+        self.coordinator.data = replace(self.coordinator.data, forecasts={1474: forecast})
+        entities = (
+            VedurIsHomeWeatherEntity(self.coordinator),
+            VedurIsPersonWeatherEntity(self.coordinator, "person.test"),
+            VedurIsDeviceTrackerWeatherEntity(self.coordinator, "device_tracker.route"),
+            VedurIsStationWeatherEntity(self.coordinator, self.station),
+        )
+        sensor = VedurIsLocationSensor(
+            self.coordinator,
+            WeatherSensorSource(key="home_weather", name="Home", device_identifier="home_weather", model="Home weather", source_type="home", source_entity_id="zone.home"),
+            CONDITION_SENSOR_DESCRIPTION,
+        )
+        sensor.hass = self.hass
+        for entity in entities:
+            entity.hass = self.hass
+            self.assertEqual(entity.condition, "clear-night")
+            self.assertEqual(entity.extra_state_attributes["condition_source"], "gottvedur_forecast")
+            self.assertEqual(entity.extra_state_attributes["condition_station_id"], 1474)
+        self.assertEqual(sensor.native_value, "clear-night")
+        self.assertEqual(sensor.extra_state_attributes["condition_raw"], "ClearSkyNight")
+        self.assertNotIn("observation_time", sensor.extra_state_attributes)
+        observation = Observation.from_api(
+            {"station": 1474, "time": now.isoformat(), "icon": "Hail", "t": 5},
+            value_source="gottvedur_is",
+        )
+        self.coordinator.data = replace(self.coordinator.data, observations={1474: observation})
+        for entity in entities:
+            self.assertEqual(entity.condition, "hail")
+            self.assertEqual(entity.extra_state_attributes["condition_source"], "gottvedur_observation")
+        self.assertEqual(sensor.native_value, "hail")
+        morning = datetime(2026, 10, 23, 8)
+        xml = replace(forecast, forecasts=(ForecastPoint(morning, 5, 2, "N", "Clear sky"),))
+        self.coordinator.data = replace(self.coordinator.data, observations={}, forecasts={1474: xml})
+        self.hass.config.latitude = 0
+        self.hass.config.longitude = 60
+        with (
+            patch("custom_components.vedur_is.weather_utils.utc_now", return_value=morning),
+            patch("custom_components.vedur_is.weather.utc_now", return_value=morning),
+            patch("custom_components.vedur_is.sensor.utc_now", return_value=morning),
+        ):
+            for entity in entities:
+                self.assertEqual(entity.condition, "clear-night")
+                self.assertEqual(entity.extra_state_attributes["condition_source"], "xml_forecast")
+                self.assertEqual(entity.extra_state_attributes["condition_station_id"], 1474)
+            self.assertEqual(sensor.native_value, "clear-night")
 
     async def test_location_service_uses_the_same_amounts(self):
         for kind in ("hourly", "daily", "twice_daily"):
