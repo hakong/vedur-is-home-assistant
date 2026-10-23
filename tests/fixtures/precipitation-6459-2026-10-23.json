@@ -1,0 +1,23 @@
+{
+  "description": "Excerpts captured from Gottvedur on 2026-10-23; these are observation amounts, not forecast rates.",
+  "station": 6459,
+  "sources": [
+    "https://www.gottvedur.is/api/observations/latest/?stationId=6459",
+    "https://www.gottvedur.is/api/observations/detailsByHour/?stationId=6459&hour=2026-10-23T11%3A00%3A00",
+    "https://www.gottvedur.is/api/observations/detailsByHour/?stationId=6459&hour=2026-10-23T12%3A00%3A00"
+  ],
+  "latest": {
+    "observationTime": "2026-10-23T11:10:00",
+    "station": 6459,
+    "precipitation": 2.7
+  },
+  "details": [
+    {"observationTime": "2026-10-23T10:10:00", "precipitation": null, "accumulatedPrecipitation": 634.5},
+    {"observationTime": "2026-10-23T10:20:00", "precipitation": 0.2, "accumulatedPrecipitation": 634.7},
+    {"observationTime": "2026-10-23T10:30:00", "precipitation": 0, "accumulatedPrecipitation": 634.7},
+    {"observationTime": "2026-10-23T10:40:00", "precipitation": 0.6, "accumulatedPrecipitation": 635.3},
+    {"observationTime": "2026-10-23T10:50:00", "precipitation": 0, "accumulatedPrecipitation": 635.3},
+    {"observationTime": "2026-10-23T11:00:00", "precipitation": 0.7, "accumulatedPrecipitation": 636},
+    {"observationTime": "2026-10-23T11:10:00", "precipitation": 1.2, "accumulatedPrecipitation": 637.2}
+  ]
+}

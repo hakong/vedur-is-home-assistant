@@ -7,7 +7,13 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from .api import Observation, Station
+from .api import (
+    OBSERVATION_SOURCE_GOTTVEDUR_IS,
+    OBSERVATION_SOURCE_UNAVAILABLE,
+    Observation,
+    ObservationPrecipitation,
+    Station,
+)
 from .const import (
     ATTR_OBSERVATION_USES_NEARBY_STATION,
     ATTR_PREFERRED_OBSERVATION_STATION_DISTANCE_KM,
@@ -15,11 +21,74 @@ from .const import (
     ATTR_PREFERRED_OBSERVATION_STATION_NAME,
 )
 from .geo import Coordinate, nearest_station, nearest_stations
+from .time_utils import utc_isoformat, utc_naive, utc_now
 
 MAX_OBSERVATION_AGE = timedelta(minutes=30)
 MAX_FUTURE_CLOCK_SKEW = timedelta(minutes=5)
 MAX_OBSERVATION_FALLBACK_DISTANCE_KM = 25.0
 MAX_ADDITIONAL_FALLBACK_DISTANCE_KM = 15.0
+
+
+def current_precipitation(
+    observation: Observation | None, *, now: datetime | None = None
+) -> ObservationPrecipitation | None:
+    """Validate precipitation against its own timestamp, not the official time."""
+    if observation is None or observation.precipitation is None:
+        return None
+    precipitation = observation.precipitation
+    current_time = utc_naive(now) if now is not None else utc_now()
+    age = current_time - utc_naive(precipitation.end)
+    if not -MAX_FUTURE_CLOCK_SKEW <= age <= MAX_OBSERVATION_AGE:
+        return None
+    return precipitation
+
+
+def measurement_value(observation: Observation, key: str) -> Any:
+    """Read an entity measurement; legacy entity key r now means hourly intensity."""
+    if key == "r":
+        precipitation = current_precipitation(observation)
+        return precipitation.average_intensity if precipitation is not None else None
+    return observation.value(key)
+
+
+def measurement_source(observation: Observation, key: str) -> str:
+    """Never advertise official ten-minute r as the hourly intensity source."""
+    if key == "r":
+        return (
+            OBSERVATION_SOURCE_GOTTVEDUR_IS
+            if current_precipitation(observation) is not None
+            else OBSERVATION_SOURCE_UNAVAILABLE
+        )
+    return observation.value_source(key)
+
+
+def measurement_time(observation: Observation, key: str) -> datetime | None:
+    """Retain the precipitation window end even when that reading has gone stale."""
+    if key == "r":
+        return observation.precipitation.end if observation.precipitation else None
+    return observation.value_time(key)
+
+
+def precipitation_attributes(observation: Observation | None) -> dict[str, Any]:
+    """Keep current intensity separate from weather forecast amounts and units."""
+    precipitation = current_precipitation(observation)
+    window = observation.precipitation if observation else None
+    return {
+        "precipitation_intensity": (
+            precipitation.average_intensity if precipitation else None
+        ),
+        "precipitation_intensity_unit": "mm/h",
+        "precipitation_amount": precipitation.amount if precipitation else None,
+        "precipitation_amount_unit": "mm",
+        "precipitation_averaging_period_minutes": 60,
+        "precipitation_period_start": utc_isoformat(window.start) if window else None,
+        "precipitation_period_end": utc_isoformat(window.end) if window else None,
+        "precipitation_source": (
+            OBSERVATION_SOURCE_GOTTVEDUR_IS
+            if precipitation
+            else OBSERVATION_SOURCE_UNAVAILABLE
+        ),
+    }
 
 
 @dataclass(frozen=True, slots=True)

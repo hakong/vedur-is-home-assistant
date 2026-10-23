@@ -273,7 +273,8 @@ class TestVedurIsApiClient(unittest.TestCase):
         self.assertEqual(observations[1474].value("t"), 1.4)
         self.assertEqual(observations[1474].value("rh"), 59)
         self.assertEqual(observations[1474].value("fg"), 4.7)
-        self.assertEqual(observations[1474].value("r"), 0)
+        self.assertIsNone(observations[1474].value("r"))
+        self.assertEqual(observations[1474].precipitation.amount, 0)
         self.assertEqual(
             observations[1474].value_source("t"), OBSERVATION_SOURCE_OFFICIAL_API
         )
@@ -284,7 +285,7 @@ class TestVedurIsApiClient(unittest.TestCase):
             observations[1474].value_source("fg"), OBSERVATION_SOURCE_GOTTVEDUR_IS
         )
         self.assertEqual(
-            observations[1474].value_source("r"), OBSERVATION_SOURCE_GOTTVEDUR_IS
+            observations[1474].value_source("r"), OBSERVATION_SOURCE_UNAVAILABLE
         )
         fallback_url = (
             f"{GOTTVEDUR_BASE_URL}/_next/data/test-build/en/vedur/"
@@ -328,10 +329,8 @@ class TestVedurIsApiClient(unittest.TestCase):
         self.assertEqual(observation.value("fg"), 4.7)
         self.assertEqual(observation.value("d"), 47)
         self.assertEqual(observation.value("p"), 1025.9)
-        self.assertEqual(observation.value("r"), 0)
-        self.assertEqual(
-            observation.value_source("r"), OBSERVATION_SOURCE_GOTTVEDUR_IS
-        )
+        self.assertIsNone(observation.value("r"))
+        self.assertEqual(observation.precipitation.amount, 0)
         self.assertIsNotNone(observation.time)
 
     def test_merge_observation_fallback_only_fills_unavailable_values(self) -> None:
@@ -351,7 +350,7 @@ class TestVedurIsApiClient(unittest.TestCase):
             {
                 "station": 1474,
                 "name": "Fallback",
-                "time": "2026-05-04T23:00:00",
+                "time": "2026-05-04T21:50:00",
                 "t": 9.0,
                 "rh": 59,
                 "fg": 4.7,
@@ -364,7 +363,7 @@ class TestVedurIsApiClient(unittest.TestCase):
         self.assertEqual(merged.value("t"), 1.0)
         self.assertEqual(merged.value("rh"), 59)
         self.assertEqual(merged.value("fg"), 4.7)
-        self.assertEqual(merged.value("r"), 0)
+        self.assertIsNone(merged.value("r"))
         self.assertEqual(merged.value_source("t"), OBSERVATION_SOURCE_OFFICIAL_API)
         self.assertEqual(merged.value_source("rh"), OBSERVATION_SOURCE_OFFICIAL_API)
         self.assertEqual(merged.name, "Official")

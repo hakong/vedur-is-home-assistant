@@ -68,11 +68,15 @@ from .forecast_utils import (
 )
 from .observation_utils import (
     ObservationStationSelection,
+    measurement_source,
+    measurement_time,
     observation_selection_attributes,
+    precipitation_attributes,
     select_observation_station,
 )
 from .weather_coordinator import VedurIsWeatherDataUpdateCoordinator
 from .weather_utils import condition_from_forecast_text, condition_from_observation
+from .time_utils import utc_isoformat
 
 MAX_OBSERVATION_DISTANCE_KM = 150.0
 HOURLY_FORECAST_FEATURES = WeatherEntityFeature.FORECAST_HOURLY
@@ -295,11 +299,8 @@ class VedurIsPersonWeatherEntity(
                 }
             )
 
-        precipitation = self._observation_value("r")
-        if precipitation is not None:
-            attrs["precipitation"] = precipitation
-
         observation = self._observation
+        attrs.update(precipitation_attributes(observation))
         if observation is not None and observation.time is not None:
             attrs[ATTR_OBSERVATION_TIME] = observation.time.isoformat()
 
@@ -662,9 +663,7 @@ class VedurIsStationWeatherEntity(
         if observation and observation.time:
             attrs[ATTR_OBSERVATION_TIME] = observation.time.isoformat()
 
-        precipitation = self._observation_value("r")
-        if precipitation is not None:
-            attrs["precipitation"] = precipitation
+        attrs.update(precipitation_attributes(observation))
 
         attrs[ATTR_STATION_HAS_DIRECT_FORECAST] = self._has_direct_forecast
         attrs[ATTR_FORECAST_USES_NEARBY_STATION] = (
@@ -861,7 +860,7 @@ def _observation_diagnostics(observation: Observation | None) -> dict[str, Any]:
     if observation is None:
         sources = {key: OBSERVATION_SOURCE_UNAVAILABLE for key in SENSOR_KEYS}
     else:
-        sources = {key: observation.value_source(key) for key in SENSOR_KEYS}
+        sources = {key: measurement_source(observation, key) for key in SENSOR_KEYS}
 
     return {
         ATTR_OBSERVATION_VALUE_SOURCES: sources,
@@ -870,6 +869,13 @@ def _observation_diagnostics(observation: Observation | None) -> dict[str, Any]:
             for key, source in sources.items()
             if source == OBSERVATION_SOURCE_UNAVAILABLE
         ],
+        "observation_value_times": {
+            key: utc_isoformat(timestamp)
+            for key in SENSOR_KEYS
+            if observation is not None
+            and sources[key] != OBSERVATION_SOURCE_UNAVAILABLE
+            and (timestamp := measurement_time(observation, key)) is not None
+        },
     }
 
 

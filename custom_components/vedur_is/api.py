@@ -15,6 +15,8 @@ from urllib.parse import quote
 
 import aiohttp
 
+from .time_utils import utc_naive
+
 BASE_URL = "https://api.vedur.is/weather"
 CAP_BASE_URL = "https://api.vedur.is/cap/v1/capbroker"
 GOTTVEDUR_BASE_URL = "https://gottvedur.is"
@@ -22,7 +24,7 @@ XML_FORECAST_URL = "https://xmlweather.vedur.is/"
 REQUEST_TIMEOUT_SECONDS = 10
 FORECAST_ID_CHUNK_SIZE = 80
 GOTTVEDUR_FALLBACK_CONCURRENCY = 8
-GOTTVEDUR_FALLBACK_CACHE_TTL = timedelta(hours=1)
+GOTTVEDUR_FALLBACK_CACHE_TTL = timedelta(minutes=10)
 GOTTVEDUR_FORECAST_CACHE_TTL = timedelta(hours=1)
 GOTTVEDUR_FORECAST_ERROR_TTL = timedelta(minutes=15)
 GOTTVEDUR_FORECAST_CONCURRENCY = 4
@@ -42,7 +44,6 @@ _GOTTVEDUR_OBSERVATION_FIELD_MAP = {
     "maxWindGust": "fg",
     "windDirection": "d",
     "pressure": "p",
-    "precipitation": "r",
     "visibility": "v",
     "cloudCover": "n",
 }
@@ -118,6 +119,25 @@ class Station:
 
 
 @dataclass(frozen=True, slots=True)
+class ObservationPrecipitation:
+    """Gottvedur AWS precipitation in mm over the hour ending at its timestamp."""
+
+    amount: float
+    end: datetime
+
+    @property
+    def start(self) -> datetime:
+        """Return the start of the rolling accumulation window."""
+        return self.end - timedelta(hours=1)
+
+    @property
+    def average_intensity(self) -> float:
+        """Return the preceding-hour average in mm/h, not an instantaneous rate."""
+        hours = (self.end - self.start).total_seconds() / 3600
+        return self.amount / hours
+
+
+@dataclass(frozen=True, slots=True)
 class Observation:
     """Latest observation data for a station."""
 
@@ -126,6 +146,8 @@ class Observation:
     time: datetime | None
     values: Mapping[str, Any]
     value_sources: Mapping[str, str] = field(default_factory=dict)
+    value_times: Mapping[str, datetime] = field(default_factory=dict)
+    precipitation: ObservationPrecipitation | None = None
 
     @classmethod
     def from_api(
@@ -136,15 +158,21 @@ class Observation:
     ) -> "Observation":
         """Build an observation from an API payload."""
         values = dict(data)
+        observation_time = _parse_datetime(data.get("time"))
         return cls(
             station_id=_required_int(data, "station"),
             name=str(data.get("name") or ""),
-            time=_parse_datetime(data.get("time")),
+            time=observation_time,
             values=values,
             value_sources={
                 key: value_source
                 for key in values
                 if key not in {"station", "name", "time"}
+            },
+            value_times={
+                key: observation_time
+                for key in values
+                if key not in {"station", "name", "time"} and observation_time is not None
             },
         )
 
@@ -157,6 +185,10 @@ class Observation:
         if _is_unavailable(self.value(key)):
             return OBSERVATION_SOURCE_UNAVAILABLE
         return self.value_sources.get(key, OBSERVATION_SOURCE_OFFICIAL_API)
+
+    def value_time(self, key: str) -> datetime | None:
+        """Return the source timestamp, including separately merged values."""
+        return self.value_times.get(key, self.time)
 
 
 @dataclass(frozen=True, slots=True)
@@ -768,7 +800,26 @@ def parse_gottvedur_observation_payload(payload: Mapping[str, Any]) -> Observati
         if gottvedur_key in latest:
             values[vedur_key] = latest.get(gottvedur_key)
 
-    return Observation.from_api(values, value_source=OBSERVATION_SOURCE_GOTTVEDUR_IS)
+    observation = Observation.from_api(
+        values, value_source=OBSERVATION_SOURCE_GOTTVEDUR_IS
+    )
+    amount = latest.get("precipitation")
+    # Never merge the preceding-hour amount into the official ten-minute r.
+    if (
+        observation.time is not None
+        and latest.get("isManned") is not True
+        and isinstance(amount, (int, float))
+        and not isinstance(amount, bool)
+        and isfinite(amount)
+        and amount >= 0
+    ):
+        return replace(
+            observation,
+            precipitation=ObservationPrecipitation(
+                amount=float(amount), end=utc_naive(observation.time)
+            ),
+        )
+    return observation
 
 
 def parse_weather_alert_payload(
@@ -839,14 +890,17 @@ def merge_observation_fallback(
     """Return an observation with unavailable primary values filled from fallback."""
     values = dict(primary.values)
     value_sources = dict(primary.value_sources)
+    value_times = dict(primary.value_times)
     for key, fallback_value in fallback.values.items():
-        if key in {"station", "name", "time"}:
+        if key in {"station", "name", "time", "r"}:
             continue
         if _is_unavailable(values.get(key)) and not _is_unavailable(fallback_value):
             values[key] = fallback_value
             value_sources[key] = fallback.value_sources.get(
                 key, OBSERVATION_SOURCE_GOTTVEDUR_IS
             )
+            if (fallback_time := fallback.value_time(key)) is not None:
+                value_times[key] = fallback_time
 
     name = primary.name or fallback.name
     observation_time = primary.time or fallback.time
@@ -861,6 +915,8 @@ def merge_observation_fallback(
         time=observation_time,
         values=values,
         value_sources=value_sources,
+        value_times=value_times,
+        precipitation=fallback.precipitation,
     )
 
 

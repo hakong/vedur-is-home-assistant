@@ -31,7 +31,7 @@ from .forecast_utils import (
     twice_daily_forecast_dicts,
 )
 from .geo import Coordinate, nearest_station
-from .observation_utils import select_observation_station
+from .observation_utils import precipitation_attributes, select_observation_station
 from .weather_coordinator import VedurIsWeatherData
 
 SERVICE_GET_FORECAST_FOR_LOCATION = "get_forecast_for_location"
@@ -202,6 +202,7 @@ def _observation_response(observation: Observation) -> dict[str, Any]:
         "time": observation.time.isoformat() if observation.time else None,
         "values": _json_safe_mapping(observation.values),
         "value_sources": dict(observation.value_sources),
+        **precipitation_attributes(observation),
     }
 
 

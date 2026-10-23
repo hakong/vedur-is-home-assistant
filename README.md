@@ -39,7 +39,7 @@ Weather data is provided by the Icelandic Met Office (vedur.is).
 - Transient API failures retry after approximately 2, 5, 10, 20, and 40
   minutes before progressively backing off to a maximum of six hours.
 - Diagnostic sensors for condition, temperature, humidity, dew point, wind
-  speed, wind gust, wind direction, pressure, and precipitation. These are
+  speed, wind gust, wind direction, pressure, and precipitation intensity. These are
   created for Home, person-following, device-tracker, and selected-station
   weather devices and are enabled by default.
 - Station metadata is used for Home Assistant device registry entries.
@@ -92,12 +92,17 @@ See [TODO.md](TODO.md) for planned features and follow-up work.
 
 ## Weather Metadata
 
-Current observations come from the official vedur.is API. When an official API
-field is unavailable, the integration can fill that field from gottvedur.is page
-data. Weather entities expose:
+Current observations normally come from the official vedur.is API. When a field
+is unavailable, the integration can fill it from gottvedur.is page data.
+Precipitation is the exception: its current sensor uses only Gottvedur's
+preceding-hour amount, expressed as a one-hour-average intensity in mm/h. It never
+switches to the official API's ten-minute `r` amount. Weather entities expose:
 
 - `observation_value_sources`: maps observation keys such as `t`, `f`, `fg`, and
-  `r` to `official_api`, `gottvedur_is`, or `unavailable`.
+  `r` to `official_api`, `gottvedur_is`, or `unavailable`. Here `r` identifies the
+  precipitation intensity sensor and can only be `gottvedur_is` or `unavailable`.
+- `observation_value_times`: UTC source timestamps for individual available
+  measurements, including the precipitation measurement's own window end.
 - `observation_unavailable_fields`: lists observation keys that are still
   unavailable after fallback data is applied.
 - `observation_uses_nearby_station`: whether a stale or unavailable preferred
@@ -125,6 +130,44 @@ Hourly forecasts come directly from Vedur.is XML forecast time points. Daily
 and twice-daily forecasts are optional derived summaries made by this
 integration; when that option is enabled, weather entities add a note to their
 Home Assistant attribution text.
+
+### Current Precipitation
+
+The **Precipitation intensity** sensor is the average over the preceding hour,
+not an instantaneous rain rate. For example, Gottvedur reporting 2.7 mm over that
+hour gives 2.7 mm/h. A reported zero is valid dry weather; missing, invalid,
+negative, stale, or failed measurements remain unavailable. Manned observations
+are excluded because their accumulation window has not been established.
+No extra detailed-observation requests or six-sample sums are needed.
+
+Both precipitation sensors and weather entities expose explicit metadata:
+
+- `precipitation_intensity` and `precipitation_intensity_unit` (`mm/h`).
+- `precipitation_amount` and `precipitation_amount_unit` (`mm`), preserving the
+  original preceding-hour amount.
+- `precipitation_averaging_period_minutes` (`60`), `precipitation_period_start`,
+  and `precipitation_period_end` (UTC).
+- `precipitation_source` (`gottvedur_is` or `unavailable`).
+
+These attributes use their own units, independently of Home Assistant's chosen
+sensor display unit and the weather entity's forecast `precipitation_unit`.
+When unavailable, the values are null; the last window timestamps may remain
+visible for diagnosis. The location-lookup action also includes these fields;
+its separate `values` dictionary preserves raw official API data, including the
+ten-minute `r` if supplied.
+
+**Upgrade notice:** existing precipitation sensor entity IDs and unique IDs stay
+the same, but the name changes to **Precipitation intensity**, the device class
+changes to `precipitation_intensity`, and the unit changes from `mm` to `mm/h`.
+Old history is not converted, relabelled, or deleted. Home Assistant may flag
+incompatible historical statistics under **Developer tools > Statistics**;
+review those rather than relabelling historical amounts as rates. Update any
+templates using the old custom weather attribute `precipitation` to use
+`precipitation_amount` (mm) or `precipitation_intensity` (mm/h). Forecast amounts
+and their unit conversion are unchanged.
+
+See [precipitation windows explained](docs/precipitation-semantics.md) for the
+API evidence and why these accumulation windows must not be mixed.
 
 ### Forecast Precipitation
 
@@ -281,7 +324,7 @@ without a template sensor.
 | `fg` | Wind gust | m/s |
 | `d` | Wind direction | degrees |
 | `p` | Sea-level pressure | hPa |
-| `r` | Precipitation, last hour | mm |
+| Gottvedur `precipitation` | Precipitation intensity: preceding-hour average | mm/h |
 
 Null values from the API are represented as unavailable states unless the
 gottvedur.is fallback provides a value.

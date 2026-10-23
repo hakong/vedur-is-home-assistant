@@ -200,7 +200,7 @@
         "name": "Pressure"
       },
       "precipitation": {
-        "name": "Precipitation"
+        "name": "Precipitation intensity"
       },
       "weather_alerts": {
         "name": "Weather alerts"

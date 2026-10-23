@@ -21,6 +21,7 @@ from homeassistant.const import (
     UnitOfPressure,
     UnitOfSpeed,
     UnitOfTemperature,
+    UnitOfVolumetricFlux,
 )
 from homeassistant.core import Event, HomeAssistant, State, callback
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -74,11 +75,16 @@ from .geo import (
 )
 from .observation_utils import (
     ObservationStationSelection,
+    measurement_source,
+    measurement_time,
+    measurement_value,
     observation_selection_attributes,
+    precipitation_attributes,
     select_observation_station,
 )
 from .weather_coordinator import VedurIsWeatherDataUpdateCoordinator
 from .weather_utils import condition_from_forecast_text, condition_from_observation
+from .time_utils import utc_isoformat
 
 _LOGGER = logging.getLogger(__name__)
 MAX_OBSERVATION_DISTANCE_KM = 150.0
@@ -145,8 +151,8 @@ SENSOR_DESCRIPTIONS: tuple[VedurIsSensorEntityDescription, ...] = (
     VedurIsSensorEntityDescription(
         key="r",
         translation_key="precipitation",
-        device_class=SensorDeviceClass.PRECIPITATION,
-        native_unit_of_measurement="mm",
+        device_class=SensorDeviceClass.PRECIPITATION_INTENSITY,
+        native_unit_of_measurement=UnitOfVolumetricFlux.MILLIMETERS_PER_HOUR,
         state_class=SensorStateClass.MEASUREMENT,
     ),
 )
@@ -397,7 +403,7 @@ class VedurIsSensor(
             super().available
             and observation is not None
             and self.entity_description.available_fn(observation)
-            and observation.value_source(self.entity_description.key)
+            and measurement_source(observation, self.entity_description.key)
             != OBSERVATION_SOURCE_UNAVAILABLE
         )
 
@@ -406,22 +412,23 @@ class VedurIsSensor(
         """Return the sensor state."""
         if self._observation is None:
             return None
-        return self._observation.value(self.entity_description.key)
+        return measurement_value(self._observation, self.entity_description.key)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return extra state attributes."""
         observation = self._observation
+        timestamp = measurement_time(observation, self.entity_description.key) if observation else None
         attrs = {
             ATTR_STATION_ID: self._station.station_id,
-            ATTR_OBSERVATION_TIME: observation.time.isoformat()
-            if observation and observation.time
-            else None,
+            ATTR_OBSERVATION_TIME: utc_isoformat(timestamp) if timestamp else None,
         }
         if observation is not None:
-            attrs[ATTR_OBSERVATION_SOURCE] = observation.value_source(
-                self.entity_description.key
+            attrs[ATTR_OBSERVATION_SOURCE] = measurement_source(
+                observation, self.entity_description.key
             )
+        if self.entity_description.key == "r":
+            attrs.update(precipitation_attributes(observation))
         attrs.update(_data_diagnostics(self.coordinator.data))
         return attrs
 
@@ -511,7 +518,7 @@ class VedurIsLocationSensor(
         ):
             return False
         return (
-            observation.value_source(self.entity_description.key)
+            measurement_source(observation, self.entity_description.key)
             != OBSERVATION_SOURCE_UNAVAILABLE
         )
 
@@ -523,7 +530,7 @@ class VedurIsLocationSensor(
         observation = self._observation
         if observation is None:
             return None
-        return observation.value(self.entity_description.key)
+        return measurement_value(observation, self.entity_description.key)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -557,13 +564,19 @@ class VedurIsLocationSensor(
             )
 
         if observation is not None:
+            timestamp = (
+                observation.time if self.entity_description.key == "condition"
+                else measurement_time(observation, self.entity_description.key)
+            )
             attrs[ATTR_OBSERVATION_TIME] = (
-                observation.time.isoformat() if observation.time else None
+                utc_isoformat(timestamp) if timestamp else None
             )
             if self.entity_description.key != "condition":
-                attrs[ATTR_OBSERVATION_SOURCE] = observation.value_source(
-                    self.entity_description.key
+                attrs[ATTR_OBSERVATION_SOURCE] = measurement_source(
+                    observation, self.entity_description.key
                 )
+        if self.entity_description.key == "r":
+            attrs.update(precipitation_attributes(observation))
         attrs.update(_data_diagnostics(self.coordinator.data))
         return attrs
 
