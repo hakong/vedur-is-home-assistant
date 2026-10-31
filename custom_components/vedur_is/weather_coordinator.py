@@ -42,11 +42,13 @@ from .polling import (
     backoff_poll_delay,
     next_aligned_poll_delay,
 )
+from .observation_utils import current_precipitation
 
 _LOGGER = logging.getLogger(__name__)
 MAX_FALLBACK_OBSERVATION_DISTANCE_KM = 150.0
 SOURCE_FORECASTS = "forecasts"
 SOURCE_OBSERVATIONS = "observations"
+SOURCE_PRECIPITATION = "precipitation"
 SOURCE_STATIONS = "stations"
 STATION_CACHE_TTL = timedelta(hours=12)
 FORECAST_CACHE_TTL = timedelta(hours=1)
@@ -87,7 +89,10 @@ class VedurIsWeatherDataUpdateCoordinator(DataUpdateCoordinator[VedurIsWeatherDa
             update_interval=timedelta(minutes=DEFAULT_SCAN_INTERVAL_MINUTES),
         )
         self.client = client
-        self._failure_count = 0
+        self._source_failure_counts: dict[str, int] = {}
+        self._source_retry_at: dict[str, datetime] = {}
+        self._source_errors: dict[str, str] = {}
+        self._observations_next_update: datetime | None = None
         self._stations_cache: dict[int, Station] | None = None
         self._stations_fetched_at: datetime | None = None
         self._forecasts_cache: dict[int, StationForecast] | None = None
@@ -122,6 +127,10 @@ class VedurIsWeatherDataUpdateCoordinator(DataUpdateCoordinator[VedurIsWeatherDa
             previous,
             source_errors,
             stale_sources,
+            now=now,
+        )
+        self._precipitation_diagnostics(
+            observations, fallback_station_ids, source_errors, stale_sources
         )
         forecasts = await self._async_get_forecasts(
             now,
@@ -135,10 +144,7 @@ class VedurIsWeatherDataUpdateCoordinator(DataUpdateCoordinator[VedurIsWeatherDa
             self._precipitation_forecast_station_ids(stations_by_id, forecasts),
         )
 
-        self._record_update_result(
-            source_errors,
-            datetime.now(timezone.utc),
-        )
+        self._schedule_next_update(datetime.now(timezone.utc))
         last_successful_update = (
             now
             if not source_errors
@@ -178,10 +184,15 @@ class VedurIsWeatherDataUpdateCoordinator(DataUpdateCoordinator[VedurIsWeatherDa
             and now - self._stations_fetched_at < STATION_CACHE_TTL
         ):
             return self._stations_cache
+        if not self._source_ready(SOURCE_STATIONS, now, source_errors, stale_sources):
+            return self._stations_cache or (
+                previous.stations if previous else self._stored_stations()
+            )
 
         try:
             stations = await self.client.async_get_stations(station_type=None)
         except (CannotConnect, InvalidResponse) as err:
+            self._source_failed(SOURCE_STATIONS, err, now)
             source_errors[SOURCE_STATIONS] = str(err)
             stale_sources.add(SOURCE_STATIONS)
             if self._stations_cache is not None:
@@ -191,6 +202,7 @@ class VedurIsWeatherDataUpdateCoordinator(DataUpdateCoordinator[VedurIsWeatherDa
             return self._stored_stations()
 
         stations_by_id = {station.station_id: station for station in stations}
+        self._source_succeeded(SOURCE_STATIONS)
         self._stations_cache = stations_by_id
         self._stations_fetched_at = now
         return stations_by_id
@@ -213,22 +225,39 @@ class VedurIsWeatherDataUpdateCoordinator(DataUpdateCoordinator[VedurIsWeatherDa
         previous: VedurIsWeatherData | None,
         source_errors: dict[str, str],
         stale_sources: set[str],
+        *,
+        now: datetime | None = None,
     ) -> dict[int, Observation]:
         """Return current observations, falling back to stale data on errors."""
         if not aws_station_ids:
             return previous.observations if previous is not None else {}
+        now = now or datetime.now(timezone.utc)
+        if not self._source_ready(
+            SOURCE_OBSERVATIONS, now, source_errors, stale_sources
+        ):
+            return previous.observations if previous else {}
+        if (
+            self._observations_next_update is not None
+            and now < self._observations_next_update
+        ):
+            return previous.observations if previous else {}
 
         try:
-            return await self.client.async_get_latest_observations(
+            observations = await self.client.async_get_latest_observations(
                 aws_station_ids,
                 fallback_station_ids=fallback_station_ids,
             )
         except (CannotConnect, InvalidResponse) as err:
+            self._source_failed(SOURCE_OBSERVATIONS, err, now)
             source_errors[SOURCE_OBSERVATIONS] = str(err)
             stale_sources.add(SOURCE_OBSERVATIONS)
             if previous is not None:
                 return previous.observations
             return {}
+        self._source_succeeded(SOURCE_OBSERVATIONS)
+        completed = datetime.now(timezone.utc)
+        self._observations_next_update = completed + next_aligned_poll_delay(completed)
+        return observations
 
     async def _async_get_forecasts(
         self,
@@ -248,10 +277,13 @@ class VedurIsWeatherDataUpdateCoordinator(DataUpdateCoordinator[VedurIsWeatherDa
             and now - self._forecasts_fetched_at < FORECAST_CACHE_TTL
         ):
             return self._forecasts_cache
+        if not self._source_ready(SOURCE_FORECASTS, now, source_errors, stale_sources):
+            return previous.forecasts if previous else {}
 
         try:
             forecasts = await self.client.async_get_forecasts(stations_by_id.keys())
         except (CannotConnect, InvalidResponse) as err:
+            self._source_failed(SOURCE_FORECASTS, err, now)
             source_errors[SOURCE_FORECASTS] = str(err)
             stale_sources.add(SOURCE_FORECASTS)
             if previous is not None:
@@ -259,25 +291,73 @@ class VedurIsWeatherDataUpdateCoordinator(DataUpdateCoordinator[VedurIsWeatherDa
             return {}
 
         self._forecasts_cache = forecasts
+        self._source_succeeded(SOURCE_FORECASTS)
         self._forecasts_fetched_at = now
         return forecasts
 
-    def _record_update_result(
-        self,
-        source_errors: Mapping[str, str],
-        completed_at: datetime,
-    ) -> None:
-        """Adjust update interval after errors to avoid hammering upstream."""
-        if not source_errors:
-            self._failure_count = 0
-            self.update_interval = next_aligned_poll_delay(completed_at)
-            return
+    def _schedule_next_update(self, completed_at: datetime) -> None:
+        """One failing product must not delay the healthy observation schedule."""
+        self.update_interval = next_aligned_poll_delay(completed_at)
+        for retry_at in self._source_retry_at.values():
+            if retry_at > completed_at:
+                self.update_interval = min(
+                    self.update_interval, retry_at - completed_at
+                )
 
-        self._failure_count += 1
-        self.update_interval = backoff_poll_delay(
-            self._failure_count,
+    def _source_failed(self, source: str, error: Exception, now: datetime) -> None:
+        failures = self._source_failure_counts.get(source, 0) + 1
+        self._source_failure_counts[source] = failures
+        self._source_errors[source] = str(error)
+        self._source_retry_at[source] = now + backoff_poll_delay(
+            failures,
             jitter_seconds=uniform(0, MAX_BACKOFF_JITTER_SECONDS),
         )
+
+    def _source_succeeded(self, source: str) -> None:
+        self._source_failure_counts.pop(source, None)
+        self._source_errors.pop(source, None)
+        self._source_retry_at.pop(source, None)
+
+    def _source_ready(
+        self, source: str, now: datetime, errors: dict[str, str], stale: set[str]
+    ) -> bool:
+        retry_at = self._source_retry_at.get(source)
+        if retry_at is None or now >= retry_at:
+            return True
+        errors[source] = self._source_errors[source]
+        stale.add(source)
+        return False
+
+    def _precipitation_diagnostics(
+        self,
+        observations: dict[int, Observation],
+        station_ids: set[int],
+        errors: dict[str, str],
+        stale: set[str],
+    ) -> None:
+        """Report secondary-source problems without changing other products' health."""
+        problems = {
+            station_id: message
+            for station_id, message in self.client.gottvedur_observation_errors.items()
+            if station_id in station_ids
+        }
+        for station_id in station_ids:
+            observation = observations.get(station_id)
+            if (
+                observation is not None
+                and observation.precipitation is not None
+                and current_precipitation(observation) is None
+            ):
+                problems.setdefault(
+                    station_id,
+                    "Precipitation measurement timestamp is stale or invalid",
+                )
+        if problems:
+            errors[SOURCE_PRECIPITATION] = "; ".join(
+                f"{station_id}: {message}"
+                for station_id, message in sorted(problems.items())
+            )
+            stale.add(SOURCE_PRECIPITATION)
 
     def _precipitation_forecast_station_ids(
         self,

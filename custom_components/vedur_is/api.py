@@ -26,6 +26,9 @@ REQUEST_TIMEOUT_SECONDS = 10
 FORECAST_ID_CHUNK_SIZE = 80
 GOTTVEDUR_FALLBACK_CONCURRENCY = 8
 GOTTVEDUR_FALLBACK_CACHE_TTL = timedelta(minutes=10)
+MAX_FALLBACK_VALUE_AGE = timedelta(minutes=30)
+MAX_FALLBACK_CLOCK_SKEW = timedelta(minutes=5)
+GOTTVEDUR_RETRY_INTERVALS = (2, 5, 10)
 GOTTVEDUR_FORECAST_CACHE_TTL = timedelta(hours=1)
 GOTTVEDUR_FORECAST_ERROR_TTL = timedelta(minutes=15)
 GOTTVEDUR_FORECAST_CONCURRENCY = 4
@@ -150,6 +153,8 @@ class Observation:
     value_sources: Mapping[str, str] = field(default_factory=dict)
     value_times: Mapping[str, datetime] = field(default_factory=dict)
     precipitation: ObservationPrecipitation | None = None
+    precipitation_fetched_at: datetime | None = None
+    precipitation_fetch_error: str | None = None
 
     @classmethod
     def from_api(
@@ -289,9 +294,10 @@ class VedurIsApiClient:
         """Initialize the client."""
         self._session = session
         self._gottvedur_build_id: str | None = None
-        self._gottvedur_observation_cache: dict[
-            int, tuple[datetime, Observation]
-        ] = {}
+        self._gottvedur_observation_cache: dict[int, tuple[datetime, Observation]] = {}
+        self._gottvedur_observation_errors: dict[int, str] = {}
+        self._gottvedur_observation_retry_at: dict[int, datetime] = {}
+        self._gottvedur_observation_failures: dict[int, int] = {}
         self._gottvedur_forecast_cache: dict[
             int, tuple[datetime, tuple[ForecastPrecipitation, ...] | None]
         ] = {}
@@ -375,19 +381,37 @@ class VedurIsApiClient:
         station_ids_to_fetch: list[int] = []
         for station_id in requested_station_ids:
             cached = self._gottvedur_observation_cache.get(station_id)
-            if cached is not None and now - cached[0] < GOTTVEDUR_FALLBACK_CACHE_TTL:
-                observations[station_id] = cached[1]
-            else:
-                station_ids_to_fetch.append(station_id)
+            retry_at = self._gottvedur_observation_retry_at.get(station_id)
+            cached_fetch = (
+                cached is not None and now - cached[0] < GOTTVEDUR_FALLBACK_CACHE_TTL
+            )
+            if cached_fetch or (retry_at is not None and now < retry_at):
+                if (
+                    observation := self._cached_gottvedur_observation(station_id, now)
+                ) is not None:
+                    observations[station_id] = observation
+                continue
+            station_ids_to_fetch.append(station_id)
 
         if not station_ids_to_fetch:
             return observations
 
         semaphore = asyncio.Semaphore(GOTTVEDUR_FALLBACK_CONCURRENCY)
 
-        async def fetch_one(station_id: int) -> Observation | None:
+        async def fetch_one(station_id: int) -> Observation:
             async with semaphore:
-                return await self._async_get_gottvedur_latest_observation(station_id)
+                observation = await self._async_get_gottvedur_latest_observation(
+                    station_id
+                )
+                if (
+                    observation is None
+                    or observation.station_id != station_id
+                    or observation.time is None
+                ):
+                    raise InvalidResponse(
+                        "Gottvedur returned a different station or missing station/timestamp"
+                    )
+                return observation
 
         results = await asyncio.gather(
             *(fetch_one(station_id) for station_id in station_ids_to_fetch),
@@ -396,20 +420,66 @@ class VedurIsApiClient:
 
         for station_id, result in zip(station_ids_to_fetch, results, strict=True):
             if isinstance(result, Exception):
+                failures = self._gottvedur_observation_failures.get(station_id, 0) + 1
+                self._gottvedur_observation_failures[station_id] = failures
+                self._gottvedur_observation_errors[station_id] = str(result)
+                self._gottvedur_observation_retry_at[station_id] = datetime.now(
+                    timezone.utc
+                ) + timedelta(
+                    minutes=GOTTVEDUR_RETRY_INTERVALS[
+                        min(failures - 1, len(GOTTVEDUR_RETRY_INTERVALS) - 1)
+                    ]
+                )
+                if (
+                    observation := self._cached_gottvedur_observation(
+                        station_id, datetime.now(timezone.utc)
+                    )
+                ) is not None:
+                    observations[station_id] = observation
                 _LOGGER.debug(
                     "Could not fetch gottvedur.is fallback for station %s: %s",
                     station_id,
                     result,
                 )
                 continue
+            if isinstance(result, asyncio.CancelledError):
+                raise result
             if result is not None:
-                observations[result.station_id] = result
+                completed = datetime.now(timezone.utc)
+                result = replace(result, precipitation_fetched_at=completed)
+                self._gottvedur_observation_errors.pop(station_id, None)
+                self._gottvedur_observation_retry_at.pop(station_id, None)
+                self._gottvedur_observation_failures.pop(station_id, None)
+                observations[station_id] = result
                 self._gottvedur_observation_cache[result.station_id] = (
-                    now,
+                    completed,
                     result,
                 )
 
         return observations
+
+    @property
+    def gottvedur_observation_errors(self) -> dict[int, str]:
+        """Expose secondary-source failures without failing official observations."""
+        return dict(self._gottvedur_observation_errors)
+
+    def _cached_gottvedur_observation(
+        self, station_id: int, now: datetime
+    ) -> Observation | None:
+        """A recent download cannot make an old measurement current."""
+        cached = self._gottvedur_observation_cache.get(station_id)
+        if cached is None or cached[1].time is None:
+            return None
+        age = utc_naive(now) - utc_naive(cached[1].time)
+        if not -MAX_FALLBACK_CLOCK_SKEW <= age <= MAX_FALLBACK_VALUE_AGE:
+            return None
+        return replace(
+            cached[1],
+            precipitation_fetched_at=cached[0],
+            precipitation_fetch_error=self._gottvedur_observation_errors.get(
+                station_id
+            ),
+        )
 
     async def async_get_forecasts(
         self,
@@ -610,13 +680,33 @@ class VedurIsApiClient:
         for station_id, fallback_observation in fallback_observations.items():
             primary_observation = observations.get(station_id)
             if primary_observation is None:
-                observations[station_id] = fallback_observation
+                if fallback_observation.time is not None and (
+                    -MAX_FALLBACK_CLOCK_SKEW
+                    <= utc_naive(datetime.now(timezone.utc))
+                    - utc_naive(fallback_observation.time)
+                    <= MAX_FALLBACK_VALUE_AGE
+                ):
+                    observations[station_id] = fallback_observation
                 continue
 
             observations[station_id] = merge_observation_fallback(
                 primary_observation,
                 fallback_observation,
             )
+        for station_id in fallback_ids:
+            if station_id in fallback_observations:
+                continue
+            cached = self._gottvedur_observation_cache.get(station_id)
+            # Retain only the window/error metadata, never expired numeric fields.
+            if (observation := observations.get(station_id)) is not None:
+                observations[station_id] = replace(
+                    observation,
+                    precipitation=cached[1].precipitation if cached else None,
+                    precipitation_fetched_at=cached[0] if cached else None,
+                    precipitation_fetch_error=self._gottvedur_observation_errors.get(
+                        station_id
+                    ),
+                )
 
     async def _async_get_gottvedur_latest_observation(
         self,
@@ -963,8 +1053,20 @@ def merge_observation_fallback(
     values = dict(primary.values)
     value_sources = dict(primary.value_sources)
     value_times = dict(primary.value_times)
+    reference_time = (
+        utc_naive(primary.time)
+        if primary.time is not None
+        else utc_naive(datetime.now(timezone.utc))
+    )
     for key, fallback_value in fallback.values.items():
         if key in {"station", "name", "time", "r"}:
+            continue
+        fallback_time = fallback.value_time(key)
+        if fallback_time is None or not (
+            -MAX_FALLBACK_CLOCK_SKEW
+            <= reference_time - utc_naive(fallback_time)
+            <= MAX_FALLBACK_VALUE_AGE
+        ):
             continue
         if _is_unavailable(values.get(key)) and not _is_unavailable(fallback_value):
             values[key] = fallback_value
@@ -989,6 +1091,8 @@ def merge_observation_fallback(
         value_sources=value_sources,
         value_times=value_times,
         precipitation=fallback.precipitation,
+        precipitation_fetched_at=fallback.precipitation_fetched_at,
+        precipitation_fetch_error=fallback.precipitation_fetch_error,
     )
 
 
