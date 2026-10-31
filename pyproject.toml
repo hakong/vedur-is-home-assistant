@@ -9,6 +9,7 @@ dependencies = [
 
 [project.optional-dependencies]
 test = [
+  "pillow>=11.0",
   "pytest>=8.0",
   "pytest-asyncio>=1.0",
   "astral>=2.2,<4"
