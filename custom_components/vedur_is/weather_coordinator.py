@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 import logging
 from random import uniform
+from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, State
@@ -42,7 +43,7 @@ from .polling import (
     backoff_poll_delay,
     next_aligned_poll_delay,
 )
-from .observation_utils import current_precipitation
+from .observation_utils import precipitation_attributes
 
 _LOGGER = logging.getLogger(__name__)
 MAX_FALLBACK_OBSERVATION_DISTANCE_KM = 150.0
@@ -64,6 +65,9 @@ class VedurIsWeatherData:
     stale_sources: frozenset[str] = frozenset()
     source_errors: Mapping[str, str] = field(default_factory=dict)
     last_successful_update: datetime | None = None
+    precipitation_diagnostics: Mapping[int, Mapping[str, Any]] = field(
+        default_factory=dict
+    )
 
     @property
     def data_stale(self) -> bool:
@@ -129,7 +133,7 @@ class VedurIsWeatherDataUpdateCoordinator(DataUpdateCoordinator[VedurIsWeatherDa
             stale_sources,
             now=now,
         )
-        self._precipitation_diagnostics(
+        precipitation_diagnostics = self._precipitation_diagnostics(
             observations, fallback_station_ids, source_errors, stale_sources
         )
         forecasts = await self._async_get_forecasts(
@@ -168,6 +172,7 @@ class VedurIsWeatherDataUpdateCoordinator(DataUpdateCoordinator[VedurIsWeatherDa
             stale_sources=frozenset(stale_sources),
             source_errors=source_errors,
             last_successful_update=last_successful_update,
+            precipitation_diagnostics=precipitation_diagnostics,
         )
 
     async def _async_get_stations(
@@ -192,7 +197,7 @@ class VedurIsWeatherDataUpdateCoordinator(DataUpdateCoordinator[VedurIsWeatherDa
         try:
             stations = await self.client.async_get_stations(station_type=None)
         except (CannotConnect, InvalidResponse) as err:
-            self._source_failed(SOURCE_STATIONS, err, now)
+            self._source_failed(SOURCE_STATIONS, err)
             source_errors[SOURCE_STATIONS] = str(err)
             stale_sources.add(SOURCE_STATIONS)
             if self._stations_cache is not None:
@@ -248,7 +253,7 @@ class VedurIsWeatherDataUpdateCoordinator(DataUpdateCoordinator[VedurIsWeatherDa
                 fallback_station_ids=fallback_station_ids,
             )
         except (CannotConnect, InvalidResponse) as err:
-            self._source_failed(SOURCE_OBSERVATIONS, err, now)
+            self._source_failed(SOURCE_OBSERVATIONS, err)
             source_errors[SOURCE_OBSERVATIONS] = str(err)
             stale_sources.add(SOURCE_OBSERVATIONS)
             if previous is not None:
@@ -283,7 +288,7 @@ class VedurIsWeatherDataUpdateCoordinator(DataUpdateCoordinator[VedurIsWeatherDa
         try:
             forecasts = await self.client.async_get_forecasts(stations_by_id.keys())
         except (CannotConnect, InvalidResponse) as err:
-            self._source_failed(SOURCE_FORECASTS, err, now)
+            self._source_failed(SOURCE_FORECASTS, err)
             source_errors[SOURCE_FORECASTS] = str(err)
             stale_sources.add(SOURCE_FORECASTS)
             if previous is not None:
@@ -304,11 +309,11 @@ class VedurIsWeatherDataUpdateCoordinator(DataUpdateCoordinator[VedurIsWeatherDa
                     self.update_interval, retry_at - completed_at
                 )
 
-    def _source_failed(self, source: str, error: Exception, now: datetime) -> None:
+    def _source_failed(self, source: str, error: Exception) -> None:
         failures = self._source_failure_counts.get(source, 0) + 1
         self._source_failure_counts[source] = failures
         self._source_errors[source] = str(error)
-        self._source_retry_at[source] = now + backoff_poll_delay(
+        self._source_retry_at[source] = datetime.now(timezone.utc) + backoff_poll_delay(
             failures,
             jitter_seconds=uniform(0, MAX_BACKOFF_JITTER_SECONDS),
         )
@@ -334,20 +339,39 @@ class VedurIsWeatherDataUpdateCoordinator(DataUpdateCoordinator[VedurIsWeatherDa
         station_ids: set[int],
         errors: dict[str, str],
         stale: set[str],
-    ) -> None:
+    ) -> dict[int, dict[str, Any]]:
         """Report secondary-source problems without changing other products' health."""
+        diagnostics: dict[int, dict[str, Any]] = {}
+        source_metadata = self.client.gottvedur_observation_metadata
         problems = {
             station_id: message
             for station_id, message in self.client.gottvedur_observation_errors.items()
             if station_id in station_ids
         }
         for station_id in station_ids:
-            observation = observations.get(station_id)
-            if (
-                observation is not None
-                and observation.precipitation is not None
-                and current_precipitation(observation) is None
-            ):
+            observation = source_metadata.get(station_id) or observations.get(station_id)
+            attrs = precipitation_attributes(observation)
+            status = attrs["precipitation_status"]
+            if station_id in problems and attrs["precipitation_fetch_error"] is None:
+                attrs["precipitation_fetch_error"] = problems[station_id]
+                if status == "missing":
+                    status = attrs["precipitation_status"] = "source_error"
+            if status != "available" or attrs["precipitation_fetch_error"] is not None:
+                diagnostics[station_id] = {
+                    key: value
+                    for key, value in attrs.items()
+                    if key in {
+                        "precipitation_status",
+                        "precipitation_age_minutes",
+                        "precipitation_max_age_minutes",
+                        "precipitation_last_successful_fetch",
+                        "precipitation_fetch_error",
+                        "precipitation_period_start",
+                        "precipitation_period_end",
+                        "precipitation_using_cached_data",
+                    }
+                }
+            if status in {"stale", "future_timestamp"}:
                 problems.setdefault(
                     station_id,
                     "Precipitation measurement timestamp is stale or invalid",
@@ -358,6 +382,7 @@ class VedurIsWeatherDataUpdateCoordinator(DataUpdateCoordinator[VedurIsWeatherDa
                 for station_id, message in sorted(problems.items())
             )
             stale.add(SOURCE_PRECIPITATION)
+        return diagnostics
 
     def _precipitation_forecast_station_ids(
         self,

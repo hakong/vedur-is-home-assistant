@@ -26,7 +26,7 @@ from custom_components.vedur_is.time_utils import utc_naive
 from tests.test_api import FakeSession
 
 
-def hourly_observation(time, amount=0, station_id=1470):
+def hourly_observation(time, amount=0, station_id=1470, **values):
     return parse_gottvedur_observation_payload(
         {
             "pageProps": {
@@ -36,6 +36,7 @@ def hourly_observation(time, amount=0, station_id=1470):
                     "precipitation": amount,
                     "temperature": 7,
                     "isManned": False,
+                    **values,
                 }
             },
         }
@@ -268,6 +269,64 @@ class TestPrecipitationAvailability(unittest.IsolatedAsyncioTestCase):
         fallback = hourly_observation(self.now - timedelta(minutes=40))
         self.assertIsNone(merge_observation_fallback(official, fallback).value("t"))
 
+    async def test_fresh_fallback_is_not_rejected_when_official_observation_lags(self):
+        primary = Observation.from_api(
+            {
+                "station": 1470,
+                "time": (self.now - timedelta(minutes=20)).isoformat(),
+                "t": 5,
+                "rh": None,
+            }
+        )
+        fallback = hourly_observation(self.now, humidity=75)
+        merged = merge_observation_fallback(primary, fallback)
+        self.assertEqual(merged.value("rh"), 75)
+        self.assertEqual(merged.value_time("rh"), fallback.time)
+        self.assertEqual(merged.value("t"), 5)
+        self.assertEqual(merged.time, primary.time)
+
+    async def test_old_fallback_is_not_accepted_against_an_old_primary_clock(self):
+        primary = Observation.from_api(
+            {
+                "station": 1470,
+                "time": (self.now - timedelta(minutes=40)).isoformat(),
+                "rh": None,
+            }
+        )
+        fallback = hourly_observation(self.now - timedelta(minutes=45), humidity=75)
+        self.assertIsNone(merge_observation_fallback(primary, fallback).value("rh"))
+
+    async def test_future_fallback_is_checked_against_utc_not_primary_clock(self):
+        primary = Observation.from_api(
+            {
+                "station": 1470,
+                "time": (self.now + timedelta(minutes=5)).isoformat(),
+                "rh": None,
+            }
+        )
+        fallback = hourly_observation(self.now + timedelta(minutes=6), humidity=75)
+        self.assertIsNone(merge_observation_fallback(primary, fallback).value("rh"))
+
+    async def test_metadata_is_retained_without_exposing_rejected_numeric_values(self):
+        self.client._async_get_gottvedur_latest_observation.side_effect = lambda sid: (
+            hourly_observation(
+                self.now - timedelta(minutes=40),
+                station_id=sid,
+            )
+        )
+        observations = await self.client.async_get_latest_observations(
+            [1470], fallback_station_ids=[1470]
+        )
+        self.assertEqual(observations, {})
+        record = self.client.gottvedur_observation_metadata[1470]
+        self.assertEqual(record.values, {})
+        self.assertIsNone(record.value("t"))
+        self.assertEqual(record.precipitation_fetched_at, self.now)
+        self.assertEqual(
+            precipitation_attributes(record)["precipitation_status"], "stale"
+        )
+        self.assertIsNone(measurement_value(record, "r"))
+
 
 HAS_HOME_ASSISTANT = find_spec("homeassistant") is not None
 if HAS_HOME_ASSISTANT:
@@ -285,6 +344,20 @@ if HAS_HOME_ASSISTANT:
 @unittest.skipUnless(HAS_HOME_ASSISTANT, "Requires the Home Assistant runtime")
 class TestIndependentSources(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
+        self.now = datetime(2026, 10, 31, 12, tzinfo=timezone.utc)
+        for module in ("api", "weather_coordinator"):
+            clock = patch(
+                f"custom_components.vedur_is.{module}.datetime", wraps=datetime
+            )
+            mocked = clock.start()
+            mocked.now.side_effect = lambda *_: self.now
+            self.addCleanup(clock.stop)
+        freshness = patch(
+            "custom_components.vedur_is.observation_utils.utc_now",
+            side_effect=lambda: utc_naive(self.now),
+        )
+        freshness.start()
+        self.addCleanup(freshness.stop)
         self.hass = HomeAssistant("/tmp/vedur-source-health-test")
         self.station = Station(
             1470, "Reykjavik", None, "sj", 64.1, -21.9, None, None, None
@@ -296,7 +369,7 @@ class TestIndependentSources(unittest.IsolatedAsyncioTestCase):
             async_on_unload=lambda callback: None,
         )
         self.observation = Observation.from_api(
-            {"station": 1470, "time": datetime.now(timezone.utc).isoformat(), "t": 8}
+            {"station": 1470, "time": self.now.isoformat(), "t": 8}
         )
         self.client = SimpleNamespace(
             async_get_stations=AsyncMock(return_value=[self.station]),
@@ -310,6 +383,7 @@ class TestIndependentSources(unittest.IsolatedAsyncioTestCase):
                 side_effect=lambda forecasts, ids: forecasts
             ),
             gottvedur_observation_errors={},
+            gottvedur_observation_metadata={},
         )
         self.coordinator = VedurIsWeatherDataUpdateCoordinator(
             self.hass, self.client, self.entry
@@ -320,10 +394,10 @@ class TestIndependentSources(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(self.coordinator.async_shutdown)
 
     async def test_forecast_backoff_does_not_delay_healthy_observations(self):
-        now = datetime.now(timezone.utc)
+        now = self.now
         for _ in range(8):
             self.coordinator._source_failed(
-                SOURCE_FORECASTS, CannotConnect("forecast offline"), now
+                SOURCE_FORECASTS, CannotConnect("forecast offline")
             )
         self.coordinator._schedule_next_update(now)
         self.assertEqual(self.coordinator.update_interval, next_aligned_poll_delay(now))
@@ -337,7 +411,7 @@ class TestIndependentSources(unittest.IsolatedAsyncioTestCase):
         self.assertIn(SOURCE_FORECASTS, self.coordinator._source_retry_at)
 
     async def test_forecast_retry_wakeup_does_not_repoll_healthy_observations(self):
-        now = datetime.now(timezone.utc)
+        now = self.now
         await self.coordinator._async_get_observations(
             [1470], {1470}, self.coordinator.data, {}, set(), now=now
         )
@@ -361,11 +435,15 @@ class TestIndependentSources(unittest.IsolatedAsyncioTestCase):
         self.assertIn("1470", data.source_errors[SOURCE_PRECIPITATION])
         self.assertNotIn(SOURCE_OBSERVATIONS, data.source_errors)
         self.assertEqual(self.coordinator._source_failure_counts, {})
+        self.assertEqual(
+            data.precipitation_diagnostics[1470]["precipitation_status"], "source_error"
+        )
+        self.assertEqual(
+            data.precipitation_diagnostics[1470]["precipitation_fetch_error"], "offline"
+        )
 
     async def test_successful_but_old_precipitation_is_marked_stale(self):
-        observation = hourly_observation(
-            datetime.now(timezone.utc) - timedelta(minutes=40)
-        )
+        observation = hourly_observation(self.now - timedelta(minutes=40))
         self.client.async_get_latest_observations.return_value = {1470: observation}
         data = await self.coordinator._async_update_data()
         self.assertIn(SOURCE_PRECIPITATION, data.stale_sources)
@@ -374,8 +452,8 @@ class TestIndependentSources(unittest.IsolatedAsyncioTestCase):
     async def test_station_metadata_backoff_does_not_skip_cached_metadata_or_observations(
         self,
     ):
-        now = datetime.now(timezone.utc)
-        self.coordinator._source_failed(SOURCE_STATIONS, CannotConnect("offline"), now)
+        now = self.now
+        self.coordinator._source_failed(SOURCE_STATIONS, CannotConnect("offline"))
         errors, stale = {}, set()
         stations = await self.coordinator._async_get_stations(
             now, self.coordinator.data, errors, stale
@@ -388,9 +466,8 @@ class TestIndependentSources(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_recovery_clears_only_the_recovered_source(self):
-        now = datetime.now(timezone.utc)
         for source in (SOURCE_STATIONS, SOURCE_FORECASTS):
-            self.coordinator._source_failed(source, CannotConnect("offline"), now)
+            self.coordinator._source_failed(source, CannotConnect("offline"))
         self.coordinator._source_succeeded(SOURCE_FORECASTS)
         self.assertNotIn(SOURCE_FORECASTS, self.coordinator._source_retry_at)
         self.assertNotIn(SOURCE_FORECASTS, self.coordinator._source_errors)
@@ -411,6 +488,110 @@ class TestIndependentSources(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             self.coordinator._source_failure_counts[SOURCE_OBSERVATIONS], 1
         )
+
+    async def test_poll_boundary_is_crossed_only_when_an_update_is_due(self):
+        for microsecond, expected_fetches in ((750000, 2), (250000, 1)):
+            with self.subTest(microsecond=microsecond):
+                second = 14 if expected_fetches == 2 else 15
+                self.now = datetime(
+                    2026, 10, 31, 12, 1, second, microsecond, tzinfo=timezone.utc
+                )
+                self.coordinator._observations_next_update = None
+                self.client.async_get_latest_observations.reset_mock()
+                await self.coordinator._async_get_observations(
+                    [1470], {1470}, self.coordinator.data, {}, set(), now=self.now
+                )
+                self.now += timedelta(seconds=1)
+                await self.coordinator._async_get_observations(
+                    [1470], {1470}, self.coordinator.data, {}, set(), now=self.now
+                )
+                self.assertEqual(
+                    self.client.async_get_latest_observations.await_count,
+                    expected_fetches,
+                )
+
+    async def test_retry_delays_start_when_each_failed_request_completes(self):
+        async def delayed_failure(*args, **kwargs):
+            self.now += timedelta(minutes=10)
+            raise CannotConnect("offline")
+
+        operations = (
+            (
+                SOURCE_STATIONS,
+                self.client.async_get_stations,
+                lambda start: self.coordinator._async_get_stations(
+                    start, self.coordinator.data, {}, set()
+                ),
+            ),
+            (
+                SOURCE_OBSERVATIONS,
+                self.client.async_get_latest_observations,
+                lambda start: self.coordinator._async_get_observations(
+                    [1470], {1470}, self.coordinator.data, {}, set(), now=start
+                ),
+            ),
+            (
+                SOURCE_FORECASTS,
+                self.client.async_get_forecasts,
+                lambda start: self.coordinator._async_get_forecasts(
+                    start, {1470: self.station}, self.coordinator.data, {}, set()
+                ),
+            ),
+        )
+        with patch(
+            "custom_components.vedur_is.weather_coordinator.uniform", return_value=0
+        ):
+            for source, fetch, operation in operations:
+                with self.subTest(source=source):
+                    start = self.now
+                    fetch.side_effect = delayed_failure
+                    await operation(start)
+                    self.assertEqual(
+                        self.coordinator._source_retry_at[source],
+                        self.now + timedelta(minutes=2),
+                    )
+                    self.assertFalse(
+                        self.coordinator._source_ready(
+                            source, self.now + timedelta(seconds=119), {}, set()
+                        )
+                    )
+                    self.assertTrue(
+                        self.coordinator._source_ready(
+                            source, self.now + timedelta(minutes=2), {}, set()
+                        )
+                    )
+
+    async def test_stale_source_diagnostics_survive_an_absent_primary_row(self):
+        client = VedurIsApiClient(FakeSession([]))
+        client._async_get_gottvedur_latest_observation = AsyncMock(
+            return_value=hourly_observation(self.now - timedelta(minutes=40))
+        )
+        client.async_get_stations = self.client.async_get_stations
+        client.async_get_forecasts = self.client.async_get_forecasts
+        client.async_enrich_forecast_precipitation = (
+            self.client.async_enrich_forecast_precipitation
+        )
+        self.coordinator.client = client
+        data = await self.coordinator._async_update_data()
+        self.assertEqual(data.observations, {})
+        self.assertTrue(data.data_stale)
+        self.assertIn(SOURCE_PRECIPITATION, data.source_errors)
+        self.assertIsNone(data.last_successful_update)
+        detail = data.precipitation_diagnostics[1470]
+        self.assertEqual(detail["precipitation_status"], "stale")
+        self.assertEqual(detail["precipitation_age_minutes"], 40)
+        self.assertIsNotNone(detail["precipitation_last_successful_fetch"])
+        self.assertIsNotNone(detail["precipitation_period_end"])
+        self.assertNotIn("precipitation_intensity", detail)
+        from custom_components.vedur_is.sensor import (
+            _data_diagnostics as sensor_diagnostics,
+        )
+        from custom_components.vedur_is.weather import (
+            _data_diagnostics as weather_diagnostics,
+        )
+
+        for render in (sensor_diagnostics, weather_diagnostics):
+            self.assertEqual(render(data)["precipitation_diagnostics"]["1470"], detail)
 
 
 if __name__ == "__main__":

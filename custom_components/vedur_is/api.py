@@ -463,6 +463,23 @@ class VedurIsApiClient:
         """Expose secondary-source failures without failing official observations."""
         return dict(self._gottvedur_observation_errors)
 
+    @property
+    def gottvedur_observation_metadata(self) -> dict[int, Observation]:
+        """Retain source timestamps/errors for diagnostics, not numeric fallbacks."""
+        return {
+            station_id: replace(
+                observation,
+                values={},
+                value_sources={},
+                value_times={},
+                precipitation_fetched_at=fetched_at,
+                precipitation_fetch_error=self._gottvedur_observation_errors.get(
+                    station_id
+                ),
+            )
+            for station_id, (fetched_at, observation) in self._gottvedur_observation_cache.items()
+        }
+
     def _cached_gottvedur_observation(
         self, station_id: int, now: datetime
     ) -> Observation | None:
@@ -1048,16 +1065,14 @@ def parse_weather_alert_payload(
 def merge_observation_fallback(
     primary: Observation,
     fallback: Observation,
+    *,
+    now: datetime | None = None,
 ) -> Observation:
     """Return an observation with unavailable primary values filled from fallback."""
     values = dict(primary.values)
     value_sources = dict(primary.value_sources)
     value_times = dict(primary.value_times)
-    reference_time = (
-        utc_naive(primary.time)
-        if primary.time is not None
-        else utc_naive(datetime.now(timezone.utc))
-    )
+    reference_time = utc_naive(now if now is not None else datetime.now(timezone.utc))
     for key, fallback_value in fallback.values.items():
         if key in {"station", "name", "time", "r"}:
             continue

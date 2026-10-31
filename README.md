@@ -181,6 +181,11 @@ observations and forecasts. A precipitation failure does not invalidate healthy
 temperature/wind readings or slow their polling. Station metadata, official
 observations, and XML forecasts also have independent retry budgets. A forecast
 retry cannot cause extra observation requests before the next aligned poll.
+Backoff delays start when a failed request completes, even if the refresh itself
+was slow. When a usable official station row is absent, affected weather and sensor
+entities still expose `precipitation_diagnostics`, keyed by station ID, with the
+last received window, fetch time, and rejection status. These diagnostics never
+contain a stale numeric precipitation value or create a substitute observation.
 
 The one-hour accumulation window does **not** establish an hourly publication
 cadence. This change intentionally does not extend the measurement limit to
