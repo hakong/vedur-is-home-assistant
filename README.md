@@ -3,8 +3,14 @@
 A Home Assistant custom integration that exposes current weather observation
 and forecast data from the Icelandic Met Office through vedur.is.
 
-This project is not affiliated with or endorsed by the Icelandic Met Office.
-Weather data is provided by the Icelandic Met Office (vedur.is).
+> **Unofficial community integration.** This project is independently developed.
+> It is not created, maintained, approved, or endorsed by the Icelandic
+> Meteorological Office (Veðurstofa Íslands / IMO), and is not affiliated with it.
+> The IMO provides the weather data, not this integration. For integration
+> support, use [this project's issue tracker](https://github.com/hakong/vedur-is-home-assistant/issues).
+
+The integration uses its own artwork, not the IMO's logo or windrose. See
+[Branding](BRANDING.md) and the [project notice](NOTICE.md).
 
 ## Features
 
@@ -73,6 +79,10 @@ config/custom_components/vedur_is
 ```
 
 Restart Home Assistant and add the integration from the UI.
+
+Home Assistant 2026.3 and newer automatically load the bundled light/dark icons
+and English logos from `custom_components/vedur_is/brand/`. No brands-repository
+submission, custom resource, or extra configuration is required.
 
 ## Development
 

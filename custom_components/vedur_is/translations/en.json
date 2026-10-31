@@ -7,7 +7,7 @@
       },
       "menu": {
         "title": "Set up weather",
-        "description": "Use Home/person weather with no station selection, or add optional station weather.",
+        "description": "Unofficial community integration. Not created, maintained, or endorsed by the Icelandic Met Office.\n\nUse Home/person weather with no station selection, or add optional station weather.",
         "menu_options": {
           "settings": "Continue without stations",
           "search_place": "Search for a place",
