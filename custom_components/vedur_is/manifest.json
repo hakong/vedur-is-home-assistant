@@ -3,10 +3,10 @@
   "name": "Icelandic Met Office Weather",
   "codeowners": ["@hakong"],
   "config_flow": true,
-  "documentation": "https://github.com/hakong/vedur-is-home-assistant",
+  "documentation": "https://github.com/hakong/vedur-is-home-assistant/tree/refactor/observations-first",
   "integration_type": "service",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/hakong/vedur-is-home-assistant/issues",
   "requirements": [],
-  "version": "0.1.12"
+  "version": "0.2.0.dev0"
 }
