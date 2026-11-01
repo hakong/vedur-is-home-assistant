@@ -20,6 +20,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 import zlib
 
 from .indexing import ProviderError, extract
+from . import cap
 
 LOG = logging.getLogger("vedur-research")
 HOSTS = {"api.vedur.is", "xmlweather.vedur.is", "gottvedur.is", "www.gottvedur.is"}
@@ -85,6 +86,9 @@ def next_slot(due, interval, now):
 
 
 def request_url(job, now):
+    if job.get("cap_lookback_days") is not None:
+        end = datetime.fromtimestamp(now, timezone.utc).date()
+        return cap.history_url(end - timedelta(days=job["cap_lookback_days"]), end)
     if job.get("hour_offset") is None:
         return job["url"]
     hour = datetime.fromtimestamp(now, timezone.utc).replace(
@@ -194,6 +198,9 @@ class Archive:
             CREATE INDEX IF NOT EXISTS samples_station_time ON samples(station_id,time_utc);
             CREATE INDEX IF NOT EXISTS samples_request ON samples(request_id);
             CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY, at REAL NOT NULL, kind TEXT NOT NULL, detail TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS cap_snapshots(request_id INTEGER PRIMARY KEY REFERENCES requests(id), record_count INTEGER NOT NULL);
+            CREATE TABLE IF NOT EXISTS cap_records(id INTEGER PRIMARY KEY, request_id INTEGER NOT NULL REFERENCES requests(id), sender TEXT NOT NULL, identifier TEXT NOT NULL, sent TEXT NOT NULL, record TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS cap_records_identity ON cap_records(sender,identifier,sent);
         """)
         columns = {row[1] for row in self.db.execute("PRAGMA table_info(requests)")}
         for name, kind in (("provider_status", "INTEGER"), ("provider_error", "TEXT")):
@@ -294,11 +301,22 @@ class Archive:
         result["provider_status"] = None
         result["provider_error"] = None
         samples = []
-        if result["status"] == 200 and not result["error"]:
+        if successful_status(job, result["status"]) and not result["error"]:
             try:
-                samples = extract(
-                    job, parse_body(result, self.config["maximum_response_bytes"])
-                )
+                body = parse_body(result, self.config["maximum_response_bytes"])
+                if job["kind"].startswith("cap_"):
+                    self.db.execute("SAVEPOINT cap_record")
+                    try:
+                        cap.record_response(
+                            self, request_id, job, body, result["status"]
+                        )
+                    except Exception:
+                        self.db.execute("ROLLBACK TO cap_record")
+                        raise
+                    finally:
+                        self.db.execute("RELEASE cap_record")
+                else:
+                    samples = extract(job, body)
             except ProviderError as error:
                 result["provider_status"] = error.status
                 result["provider_error"] = str(error)
@@ -347,7 +365,7 @@ class Archive:
             "SELECT * FROM hosts WHERE host=?", (host,)
         ).fetchone()
         status = result.get("provider_status") or result["status"]
-        failed = status != 200 or result["error"] or parser_error
+        failed = not successful_status(job, status) or result["error"] or parser_error
         failures = row["failures"] + 1 if failed else 0
         factor = host_row["factor"]
         pause = 0
@@ -380,13 +398,22 @@ class Archive:
                     "interval_multiplier": factor,
                 },
             )
-        elif status == 200 and not result["error"]:
+        elif successful_status(job, status) and not result["error"]:
             self.db.execute("UPDATE hosts SET failures=0 WHERE host=?", (host,))
         due = next_slot(row["next_due"], job["interval"] * factor, now)
         if status is not None and 400 <= status < 500 and status not in {403, 408, 429}:
             due = max(due, now + 21600)
         elif failed:
             due = max(due, now + min(3600, 300 * 2 ** min(failures - 1, 4)))
+        if job.get("once") and not failed:
+            due = (
+                float(
+                    self.db.execute(
+                        "SELECT value FROM meta WHERE key='stop_at'"
+                    ).fetchone()[0]
+                )
+                + 1
+            )
         self.db.execute(
             "UPDATE jobs SET next_due=?,failures=? WHERE id=?",
             (due, failures, row["id"]),
@@ -465,6 +492,10 @@ class Archive:
         self.db.commit()
 
 
+def successful_status(job, status):
+    return status == 200 or (status == 204 and job["kind"] in cap.LIST_KINDS)
+
+
 def load_config(path):
     config = json.loads(Path(path).read_text())
     if config.get("schema_version") != 1 or not 1 <= config["duration_days"] <= 30:
@@ -494,6 +525,7 @@ def main():
     parser.add_argument("--config", required=True)
     parser.add_argument("--data-dir", required=True)
     parser.add_argument("--max-requests", type=int)
+    parser.add_argument("--cap-plan", help="Frozen additive CAP campaign plan")
     args = parser.parse_args()
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
@@ -503,6 +535,8 @@ def main():
     archive = None
     try:
         archive = Archive(args.data_dir, load_config(args.config))
+        if args.cap_plan:
+            cap.install(archive, json.loads(Path(args.cap_plan).read_text()))
         archive.run(args.max_requests)
     except (ValueError, RuntimeError) as error:
         LOG.error("Collection stopped: %s", error)

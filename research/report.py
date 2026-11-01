@@ -21,7 +21,7 @@ def report(directory):
     provider = "provider_status" if "provider_status" in columns else "NULL"
     outcomes = [
         dict(row)
-        for row in db.execute(f"""SELECT job_id,COUNT(*) AS requests,SUM(status=200 AND error IS NULL) AS http_ok,
+        for row in db.execute(f"""SELECT job_id,COUNT(*) AS requests,SUM(status BETWEEN 200 AND 299 AND error IS NULL) AS http_ok,
         SUM({provider} IS NOT NULL) AS provider_errors,
         SUM(parser_error IS NOT NULL) AS parser_errors,MAX(finished) AS last_finished,
         MAX(started-scheduled_at) AS maximum_schedule_lag_seconds
@@ -73,6 +73,33 @@ def report(directory):
         jobs=outcomes,
         observed_cadence=observed,
     )
+    if db.execute("SELECT 1 FROM sqlite_master WHERE name='cap_snapshots'").fetchone():
+        output["cap"] = dict(
+            successful_snapshots=db.execute(
+                "SELECT COUNT(*) FROM cap_snapshots"
+            ).fetchone()[0],
+            empty_snapshots=db.execute(
+                "SELECT COUNT(*) FROM cap_snapshots WHERE record_count=0"
+            ).fetchone()[0],
+            indexed_messages=db.execute("SELECT COUNT(*) FROM cap_records").fetchone()[
+                0
+            ],
+            message_types=[
+                dict(row)
+                for row in db.execute(
+                    "SELECT json_extract(record,'$.msgType') AS message_type, COUNT(*) AS records FROM cap_records JOIN requests ON requests.id=cap_records.request_id JOIN jobs ON jobs.id=requests.job_id WHERE json_extract(jobs.definition,'$.kind')='cap_json' GROUP BY message_type"
+                )
+            ],
+            discovery_limit_events=db.execute(
+                "SELECT COUNT(*) FROM events WHERE kind IN ('cap_seed_limit','cap_discovery_limit')"
+            ).fetchone()[0],
+            latest_active_fetch=[
+                dict(row)
+                for row in db.execute(
+                    "SELECT r.id,r.finished,r.status,r.error,r.parser_error,r.provider_status,s.record_count FROM requests r LEFT JOIN cap_snapshots s ON s.request_id=r.id WHERE r.job_id='cap_active' ORDER BY r.id DESC LIMIT 1"
+                )
+            ],
+        )
     db.close()
     return output
 

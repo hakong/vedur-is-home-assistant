@@ -181,3 +181,55 @@ have a bounded restart policy. There is no automatic HA deployment or release.
 
 Only after these questions are supported by evidence should we specify sensors,
 units, expiry policies, source selection or any derived values.
+
+## CAP alert extension
+
+CAP collection is an explicit, additive extension to the existing archive. It
+does not alter the weather configuration, existing job deadlines or campaign end.
+It uses the same serial request queue, disk limits and persistent host backoff.
+The official contract is <https://api.vedur.is/cap/openapi.json> (base `/cap`).
+
+- Nationwide active meteorological message identifiers: every five minutes.
+- Detailed active list for all categories: every five minutes, retained as an
+  independent provider representation (may include non-weather hazards).
+- Message history for the previous two UTC dates through today: hourly, to
+  capture short-lived alerts and cancellations absent from a later active list.
+- Initial fixed two-week history: once; fetch at most the 100 newest referenced
+  versions from that index. The complete index is archived even if capped.
+- Full JSON and CAP 1.2 XML: fetched once successfully per discovered message
+  version, including referenced predecessors. Failures are retried with backoff.
+- CAP schema and region definitions: daily.
+
+This adds about 25 requests/hour plus the initial history and newly discovered
+message details. Discovery is capped at 2,000 versions (two formats each) per
+campaign; hitting a limit creates a visible event rather than silently claiming
+complete coverage. No provider resource URLs or attachments are downloaded.
+
+`cap_snapshots` indexes successful lists and documents, including empty lists;
+`cap_records` retains their original fields separately from station `samples`.
+Sender, identifier and sent instant identify a version. Original timestamp
+strings remain intact; equivalent timezone spellings are deduplicated for fetches.
+Languages, areas/polygons, severity, onset, expiry, references, message types and
+test/exercise status are preserved, not translated into HA entities or filtered.
+XML indexing groups repeated elements; the complete XML bytes remain authoritative.
+
+HTTP 204 with an empty body is accepted only for CAP list endpoints. JSON `[]`
+also represents an empty list; JSON null, malformed responses, failed details
+and transport errors do not. The report shows the latest active fetch's status
+and count (null on failure), rather than presenting an earlier empty list as fresh.
+Disappearance from a list is **not** interpreted as a cancellation. History and
+reference traversal improve coverage but cannot guarantee every provider lifecycle
+event or validate all possible CAP variants during one finite campaign.
+
+To enable on a stopped collector, generate a plan outside Git:
+
+```sh
+python3 -m research.cap --output /path/to/cap-plan.json
+python3 -m research.collector --config /path/to/campaign.json \
+  --data-dir /path/to/data --cap-plan /path/to/cap-plan.json
+```
+
+Add `--cap-plan` to the systemd command as well. Installation is idempotent,
+records its activation time, and rejects later plan changes. Existing jobs and
+the original campaign config remain immutable. This is research collection only;
+it does not enable notifications or change production Home Assistant.

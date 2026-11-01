@@ -10,6 +10,7 @@ Type=simple
 User=@USER@
 WorkingDirectory=@ROOT@/runner
 ExecStart=/usr/bin/python3 -m research.collector --config @ROOT@/campaign.json --data-dir @ROOT@/data
+# For CAP, append --cap-plan @ROOT@/cap-plan.json after generating its frozen plan.
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONDONTWRITEBYTECODE=1
 Restart=on-failure
