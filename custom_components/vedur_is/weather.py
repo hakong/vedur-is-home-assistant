@@ -921,7 +921,7 @@ def _data_diagnostics(data: Any) -> dict[str, Any]:
             ATTR_LAST_SUCCESSFUL_UPDATE: None,
         }
 
-    return {
+    attrs = {
         ATTR_DATA_STALE: data.data_stale,
         ATTR_STALE_SOURCES: sorted(data.stale_sources),
         ATTR_SOURCE_ERRORS: dict(data.source_errors),
@@ -929,6 +929,12 @@ def _data_diagnostics(data: Any) -> dict[str, Any]:
         if data.last_successful_update
         else None,
     }
+    if data.precipitation_diagnostics:
+        attrs["precipitation_diagnostics"] = {
+            str(station_id): dict(details)
+            for station_id, details in data.precipitation_diagnostics.items()
+        }
+    return attrs
 
 
 def _derived_forecasts_enabled(

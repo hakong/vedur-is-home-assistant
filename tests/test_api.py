@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 from typing import Any
 import unittest
+from unittest.mock import patch
 
 import aiohttp
 
@@ -214,10 +216,13 @@ class TestVedurIsApiClient(unittest.TestCase):
             ],
         )
 
+    @patch("custom_components.vedur_is.api.datetime", wraps=datetime)
     def test_get_latest_observations_fills_missing_values_from_gottvedur(
         self,
+        clock,
     ) -> None:
         """Missing official values are filled from gottvedur.is page data."""
+        clock.now.return_value = datetime(2026, 5, 4, 22, tzinfo=timezone.utc)
         session = RouteSession(
             {
                 f"{BASE_URL}/observations/aws/10min/latest": [
@@ -358,7 +363,7 @@ class TestVedurIsApiClient(unittest.TestCase):
             }
         )
 
-        merged = merge_observation_fallback(primary, fallback)
+        merged = merge_observation_fallback(primary, fallback, now=primary.time)
 
         self.assertEqual(merged.value("t"), 1.0)
         self.assertEqual(merged.value("rh"), 59)

@@ -24,6 +24,7 @@ from .geo import Coordinate, nearest_station, nearest_stations
 from .time_utils import utc_isoformat, utc_naive, utc_now
 
 MAX_OBSERVATION_AGE = timedelta(minutes=30)
+MAX_PRECIPITATION_AGE = timedelta(minutes=30)
 MAX_FUTURE_CLOCK_SKEW = timedelta(minutes=5)
 MAX_OBSERVATION_FALLBACK_DISTANCE_KM = 25.0
 MAX_ADDITIONAL_FALLBACK_DISTANCE_KM = 15.0
@@ -38,7 +39,7 @@ def current_precipitation(
     precipitation = observation.precipitation
     current_time = utc_naive(now) if now is not None else utc_now()
     age = current_time - utc_naive(precipitation.end)
-    if not -MAX_FUTURE_CLOCK_SKEW <= age <= MAX_OBSERVATION_AGE:
+    if not -MAX_FUTURE_CLOCK_SKEW <= age < MAX_PRECIPITATION_AGE:
         return None
     return precipitation
 
@@ -71,9 +72,30 @@ def measurement_time(observation: Observation, key: str) -> datetime | None:
 
 def precipitation_attributes(observation: Observation | None) -> dict[str, Any]:
     """Keep current intensity separate from weather forecast amounts and units."""
-    precipitation = current_precipitation(observation)
+    now = utc_now()
+    precipitation = current_precipitation(observation, now=now)
     window = observation.precipitation if observation else None
+    age = (now - utc_naive(window.end)).total_seconds() if window else None
+    error = observation.precipitation_fetch_error if observation else None
+    status = "available"
+    if window is None:
+        status = "source_error" if error is not None else "missing"
+    elif age >= MAX_PRECIPITATION_AGE.total_seconds():
+        status = "stale"
+    elif age < -MAX_FUTURE_CLOCK_SKEW.total_seconds():
+        status = "future_timestamp"
     return {
+        "precipitation_status": status,
+        "precipitation_age_minutes": round(age / 60, 1) if age is not None else None,
+        "precipitation_max_age_minutes": MAX_PRECIPITATION_AGE.total_seconds() / 60,
+        "precipitation_last_successful_fetch": utc_isoformat(
+            observation.precipitation_fetched_at
+        )
+        if observation and observation.precipitation_fetched_at
+        else None,
+        "precipitation_fetch_error": error,
+        "precipitation_using_cached_data": error is not None
+        and precipitation is not None,
         "precipitation_intensity": (
             precipitation.average_intensity if precipitation else None
         ),

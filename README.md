@@ -138,7 +138,7 @@ Home Assistant attribution text.
 The **Precipitation intensity** sensor is the average over the preceding hour,
 not an instantaneous rain rate. For example, Gottvedur reporting 2.7 mm over that
 hour gives 2.7 mm/h. A reported zero is valid dry weather; missing, invalid,
-negative, stale, or failed measurements remain unavailable. Manned observations
+negative, or stale measurements remain unavailable. Manned observations
 are excluded because their accumulation window has not been established.
 No extra detailed-observation requests or six-sample sums are needed.
 
@@ -150,6 +150,16 @@ Both precipitation sensors and weather entities expose explicit metadata:
 - `precipitation_averaging_period_minutes` (`60`), `precipitation_period_start`,
   and `precipitation_period_end` (UTC).
 - `precipitation_source` (`gottvedur_is` or `unavailable`).
+- `precipitation_status`: `available`, `missing`, `stale`, `future_timestamp`, or
+  `source_error`. A valid zero is `available`, not missing.
+- `precipitation_age_minutes` and `precipitation_max_age_minutes`: age of the
+  measurement window end, and the current acceptance limit (30 minutes).
+- `precipitation_last_successful_fetch`: when a Gottvedur response was successfully
+  downloaded. This is separate from `precipitation_period_end`; repeatedly
+  downloading an old observation never makes the measurement fresh.
+- `precipitation_fetch_error` and `precipitation_using_cached_data`: the last
+  request failure and whether a still-fresh cached value is being retained
+  through that failure. Normal ten-minute fetch caching does not set this flag.
 
 These attributes use their own units, independently of Home Assistant's chosen
 sensor display unit and the weather entity's forecast `precipitation_unit`.
@@ -157,6 +167,50 @@ When unavailable, the values are null; the last window timestamps may remain
 visible for diagnosis. The location-lookup action also includes these fields;
 its separate `values` dictionary preserves raw official API data, including the
 ten-minute `r` if supplied.
+
+A failed Gottvedur refresh can retain the previous reading only while its own
+measurement timestamp is still within the 30-minute limit. A newer response with
+missing precipitation replaces the previous reading; it is never silently filled
+from an older non-null value. Retries are per station with minimum delays of two,
+five, then ten minutes (capped at ten), subject to the normal polling schedule.
+Cache hits and failed requests do not advance the last-successful-fetch time.
+
+Scheduled observation polls explicitly refresh Gottvedur, even if the previous
+response completed slightly less than ten minutes earlier. This prevents the
+ten-minute response cache from accidentally reducing normal polling to every
+twenty minutes. Other requests still use the cache, and scheduled refreshes never
+bypass per-station failure backoff. A timer waking slightly before an aligned
+observation slot waits for that slot rather than publishing an intermediate old
+snapshot before the actual request completes.
+
+Precipitation expires when its measurement window end becomes 30 minutes old,
+using a separate Home Assistant timer rather than waiting for the next poll.
+Expiry makes no HTTP requests, does not restart the polling schedule, and does
+not advance measurement, download, or successful-update timestamps. It uses the
+last published snapshot, so an in-flight request cannot silently extend an old
+reading's lifetime. Temperature and wind retain their independent availability
+rules. A real expiry during a slow request still produces an unavailable state;
+this is not hidden to make the graph continuous. Timers are cancelled on unload.
+
+Gottvedur request failures and stale/invalid precipitation timestamps appear as
+`precipitation` in `stale_sources` and `source_errors`, independently of official
+observations and forecasts. A precipitation failure does not invalidate healthy
+temperature/wind readings or slow their polling. Station metadata, official
+observations, and XML forecasts also have independent retry budgets. A forecast
+retry cannot cause extra observation requests before the next aligned poll.
+Backoff delays start when a failed request completes, even if the refresh itself
+was slow. When a usable official station row is absent, affected weather and sensor
+entities still expose `precipitation_diagnostics`, keyed by station ID, with the
+last received window, fetch time, and rejection status. These diagnostics never
+contain a stale numeric precipitation value or create a substitute observation.
+
+The one-hour accumulation window does **not** establish an hourly publication
+cadence. This change intentionally does not extend the measurement limit to
+90 minutes or infer cadence from the hourly history table. A source that only
+delivers hour-old observations can still be unavailable under this conservative
+policy; its latest-endpoint cadence needs verification before changing that policy.
+Some Home Assistant views suppress attributes on unavailable sensors; the related
+weather entity also exposes the precipitation diagnostics when it is available.
 
 **Upgrade notice:** existing precipitation sensor entity IDs and unique IDs stay
 the same, but the name changes to **Precipitation intensity**, the device class
