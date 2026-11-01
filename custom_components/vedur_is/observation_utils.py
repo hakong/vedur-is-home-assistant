@@ -39,7 +39,7 @@ def current_precipitation(
     precipitation = observation.precipitation
     current_time = utc_naive(now) if now is not None else utc_now()
     age = current_time - utc_naive(precipitation.end)
-    if not -MAX_FUTURE_CLOCK_SKEW <= age <= MAX_PRECIPITATION_AGE:
+    if not -MAX_FUTURE_CLOCK_SKEW <= age < MAX_PRECIPITATION_AGE:
         return None
     return precipitation
 
@@ -80,7 +80,7 @@ def precipitation_attributes(observation: Observation | None) -> dict[str, Any]:
     status = "available"
     if window is None:
         status = "source_error" if error is not None else "missing"
-    elif age > MAX_PRECIPITATION_AGE.total_seconds():
+    elif age >= MAX_PRECIPITATION_AGE.total_seconds():
         status = "stale"
     elif age < -MAX_FUTURE_CLOCK_SKEW.total_seconds():
         status = "future_timestamp"

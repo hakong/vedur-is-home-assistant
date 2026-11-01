@@ -175,6 +175,23 @@ from an older non-null value. Retries are per station with minimum delays of two
 five, then ten minutes (capped at ten), subject to the normal polling schedule.
 Cache hits and failed requests do not advance the last-successful-fetch time.
 
+Scheduled observation polls explicitly refresh Gottvedur, even if the previous
+response completed slightly less than ten minutes earlier. This prevents the
+ten-minute response cache from accidentally reducing normal polling to every
+twenty minutes. Other requests still use the cache, and scheduled refreshes never
+bypass per-station failure backoff. A timer waking slightly before an aligned
+observation slot waits for that slot rather than publishing an intermediate old
+snapshot before the actual request completes.
+
+Precipitation expires when its measurement window end becomes 30 minutes old,
+using a separate Home Assistant timer rather than waiting for the next poll.
+Expiry makes no HTTP requests, does not restart the polling schedule, and does
+not advance measurement, download, or successful-update timestamps. It uses the
+last published snapshot, so an in-flight request cannot silently extend an old
+reading's lifetime. Temperature and wind retain their independent availability
+rules. A real expiry during a slow request still produces an unavailable state;
+this is not hidden to make the graph continuous. Timers are cancelled on unload.
+
 Gottvedur request failures and stale/invalid precipitation timestamps appear as
 `precipitation` in `stale_sources` and `source_errors`, independently of official
 observations and forecasts. A precipitation failure does not invalidate healthy

@@ -336,6 +336,7 @@ class VedurIsApiClient:
         station_ids: Iterable[int],
         *,
         fallback_station_ids: Iterable[int] | None = None,
+        refresh_fallback: bool = False,
     ) -> dict[int, Observation]:
         """Return latest processed 10-minute observations."""
         requested_station_ids = list(
@@ -361,6 +362,7 @@ class VedurIsApiClient:
             await self._async_merge_gottvedur_fallbacks(
                 observations,
                 fallback_station_ids,
+                refresh=refresh_fallback,
             )
 
         return observations
@@ -368,8 +370,10 @@ class VedurIsApiClient:
     async def async_get_gottvedur_latest_observations(
         self,
         station_ids: Iterable[int],
+        *,
+        refresh: bool = False,
     ) -> dict[int, Observation]:
-        """Return latest observations from the new gottvedur.is page data."""
+        """Read Gottvedur observations; scheduled refreshes still honour backoff."""
         requested_station_ids = list(
             dict.fromkeys(int(station_id) for station_id in station_ids)
         )
@@ -385,7 +389,9 @@ class VedurIsApiClient:
             cached_fetch = (
                 cached is not None and now - cached[0] < GOTTVEDUR_FALLBACK_CACHE_TTL
             )
-            if cached_fetch or (retry_at is not None and now < retry_at):
+            if (cached_fetch and not refresh) or (
+                retry_at is not None and now < retry_at
+            ):
                 if (
                     observation := self._cached_gottvedur_observation(station_id, now)
                 ) is not None:
@@ -683,6 +689,8 @@ class VedurIsApiClient:
         self,
         observations: dict[int, Observation],
         station_ids: Iterable[int],
+        *,
+        refresh: bool = False,
     ) -> None:
         """Fill missing official observation values from gottvedur.is."""
         fallback_ids = list(
@@ -692,7 +700,7 @@ class VedurIsApiClient:
             return
 
         fallback_observations = await self.async_get_gottvedur_latest_observations(
-            fallback_ids
+            fallback_ids, refresh=refresh
         )
         for station_id, fallback_observation in fallback_observations.items():
             primary_observation = observations.get(station_id)
