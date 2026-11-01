@@ -17,9 +17,12 @@ def report(directory):
     )
     db.row_factory = sqlite3.Row
     meta = dict(db.execute("SELECT key,value FROM meta"))
+    columns = {row[1] for row in db.execute("PRAGMA table_info(requests)")}
+    provider = "provider_status" if "provider_status" in columns else "NULL"
     outcomes = [
         dict(row)
-        for row in db.execute("""SELECT job_id,COUNT(*) AS requests,SUM(status=200 AND error IS NULL) AS http_ok,
+        for row in db.execute(f"""SELECT job_id,COUNT(*) AS requests,SUM(status=200 AND error IS NULL) AS http_ok,
+        SUM({provider} IS NOT NULL) AS provider_errors,
         SUM(parser_error IS NOT NULL) AS parser_errors,MAX(finished) AS last_finished,
         MAX(started-scheduled_at) AS maximum_schedule_lag_seconds
         FROM requests GROUP BY job_id ORDER BY job_id""")
@@ -27,7 +30,7 @@ def report(directory):
     statuses = [
         dict(row)
         for row in db.execute(
-            "SELECT status,error,COUNT(*) AS count FROM requests GROUP BY status,error"
+            f"SELECT status,{provider} AS provider_status,error,COUNT(*) AS count FROM requests GROUP BY status,{provider},error"
         )
     ]
     cadence = defaultdict(list)
@@ -114,6 +117,8 @@ if __name__ == "__main__":
             result["jobs_with_errors"] = [
                 job
                 for job in result.pop("jobs")
-                if job["http_ok"] != job["requests"] or job["parser_errors"]
+                if job["http_ok"] != job["requests"]
+                or job["parser_errors"]
+                or job["provider_errors"]
             ]
         print(json.dumps(result, indent=2))

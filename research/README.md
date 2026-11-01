@@ -66,6 +66,11 @@ ETag, Last-Modified and Retry-After. Cookies are excluded.
 The ledger retains the exact requested URL, method/body through its immutable job
 definition, final URL, scheduled/start/end times, monotonic request duration, HTTP
 status, selected response headers, errors, body size/hash and truncation flag.
+Provider problem responses have separate `provider_status` and `provider_error`
+columns: Gottvedur can return HTTP 200 containing a JSON 404 "No observations
+found" response. That is recorded separately from transport and parser failures;
+embedded rate limits also trigger host backoff. Earlier parser diagnostics remain
+as recorded, with the original body available for reinterpretation.
 It requests identity encoding. Archived bytes are the body after HTTP transfer
 decoding; any provider content encoding is retained in headers and decoded only
 for indexing. A response is bounded at 8 MiB; oversized bodies are explicitly
@@ -132,8 +137,8 @@ timestamps, observed timestamp steps and first-seen ages. Those are measurements
 of this sample, not automatic station classifications. Structured query examples:
 
 ```sql
-SELECT job_id, status, error, parser_error, COUNT(*)
-FROM requests GROUP BY job_id, status, error, parser_error;
+SELECT job_id, status, provider_status, error, parser_error, COUNT(*)
+FROM requests GROUP BY job_id, status, provider_status, error, parser_error;
 
 SELECT r.id, datetime(r.finished, 'unixepoch') AS fetched_utc,
        s.station_id, s.time_raw, s.summary

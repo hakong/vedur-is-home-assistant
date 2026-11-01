@@ -19,7 +19,7 @@ from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 import zlib
 
-from .indexing import extract
+from .indexing import ProviderError, extract
 
 LOG = logging.getLogger("vedur-research")
 HOSTS = {"api.vedur.is", "xmlweather.vedur.is", "gottvedur.is", "www.gottvedur.is"}
@@ -195,6 +195,10 @@ class Archive:
             CREATE INDEX IF NOT EXISTS samples_request ON samples(request_id);
             CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY, at REAL NOT NULL, kind TEXT NOT NULL, detail TEXT NOT NULL);
         """)
+        columns = {row[1] for row in self.db.execute("PRAGMA table_info(requests)")}
+        for name, kind in (("provider_status", "INTEGER"), ("provider_error", "TEXT")):
+            if name not in columns:
+                self.db.execute(f"ALTER TABLE requests ADD COLUMN {name} {kind}")
         self.config = config
         encoded = json.dumps(config, sort_keys=True).encode()
         digest = hashlib.sha256(encoded).hexdigest()
@@ -287,12 +291,17 @@ class Archive:
     def record(self, request_id, job, result):
         digest = self.store_blob(result["body"])
         parser_error = None
+        result["provider_status"] = None
+        result["provider_error"] = None
         samples = []
         if result["status"] == 200 and not result["error"]:
             try:
                 samples = extract(
                     job, parse_body(result, self.config["maximum_response_bytes"])
                 )
+            except ProviderError as error:
+                result["provider_status"] = error.status
+                result["provider_error"] = str(error)
             except Exception as error:
                 parser_error = f"{type(error).__name__}: {error}"
         self.db.execute(
@@ -324,6 +333,10 @@ class Archive:
                     json.dumps(details, ensure_ascii=False),
                 ),
             )
+        self.db.execute(
+            "UPDATE requests SET provider_status=?,provider_error=? WHERE id=?",
+            (result["provider_status"], result["provider_error"], request_id),
+        )
         self.db.commit()
         return parser_error
 
@@ -333,7 +346,7 @@ class Archive:
         host_row = self.db.execute(
             "SELECT * FROM hosts WHERE host=?", (host,)
         ).fetchone()
-        status = result["status"]
+        status = result.get("provider_status") or result["status"]
         failed = status != 200 or result["error"] or parser_error
         failures = row["failures"] + 1 if failed else 0
         factor = host_row["factor"]
@@ -428,13 +441,14 @@ class Archive:
             last_finish = time.monotonic()
             completed += 1
             LOG.info(
-                "%s status=%s bytes=%s elapsed=%.2fs error=%s parser=%s",
+                "%s status=%s bytes=%s elapsed=%.2fs error=%s parser=%s provider=%s",
                 job["id"],
                 result["status"],
                 len(result["body"]),
                 result["elapsed"],
                 result["error"],
                 parser_error,
+                result.get("provider_status"),
             )
             if max_requests is not None and completed >= max_requests:
                 break

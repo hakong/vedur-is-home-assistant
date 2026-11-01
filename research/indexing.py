@@ -6,6 +6,25 @@ import json
 import xml.etree.ElementTree as ET
 
 
+class ProviderError(ValueError):
+    """A problem-details response delivered inside an HTTP-success envelope."""
+
+    def __init__(self, payload):
+        self.status = payload["status"]
+        super().__init__(str(payload.get("detail") or payload.get("title")))
+
+
+def check_problem(payload):
+    if (
+        isinstance(payload, dict)
+        and type(payload.get("status")) is int
+        and 400 <= payload["status"] <= 599
+        and isinstance(payload.get("title"), str)
+        and ("detail" in payload or "type" in payload)
+    ):
+        raise ProviderError(payload)
+
+
 def normalize_time(value):
     """Index provider dates as UTC; retain the untouched value separately."""
     if not isinstance(value, str) or not value.strip():
@@ -64,7 +83,7 @@ def extract(job, body):
     """Index lightweight summaries; raw bodies always remain the authority."""
     kind = job["kind"]
     if kind == "metadata":
-        json.loads(body)
+        check_problem(json.loads(body))
         return []
     if kind.startswith("xml_"):
         root = ET.fromstring(body)
@@ -98,6 +117,7 @@ def extract(job, body):
             )
         return results
     payload = json.loads(body)
+    check_problem(payload)
     if kind == "official_observation":
         if not isinstance(payload, list):
             raise ValueError("Official observations are not a list")

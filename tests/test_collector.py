@@ -216,6 +216,50 @@ class ArchiveTests(unittest.TestCase):
             self.archive.db.execute("SELECT blocked_until FROM hosts").fetchone()[0], 0
         )
 
+    def test_http_200_problem_is_distinct_from_parser_failure(self):
+        body = b'{"type":"https://tools.ietf.org/html/rfc9110#section-15.5.5","title":"Not Found","status":404,"detail":"No observations found for station","Context":{"stationId":3470}}'
+        request, result, error = self.record(body)
+        self.assertIsNone(error)
+        row = self.archive.db.execute(
+            "SELECT * FROM requests WHERE id=?", (request,)
+        ).fetchone()
+        self.assertEqual(row["status"], 200)
+        self.assertEqual(row["provider_status"], 404)
+        self.assertEqual(row["provider_error"], "No observations found for station")
+        self.assertEqual(export_body(self.root, request), body)
+        job_row = self.archive.db.execute("SELECT * FROM jobs").fetchone()
+        self.archive.reschedule(job_row, self.job, result, error)
+        self.assertGreaterEqual(
+            self.archive.db.execute("SELECT next_due FROM jobs").fetchone()[0],
+            result["finished"] + 21600,
+        )
+
+    def test_embedded_rate_limit_also_slows_host(self):
+        _, result, error = self.record(
+            b'{"title":"Too Many Requests","status":429,"detail":"Retry later"}'
+        )
+        self.archive.reschedule(
+            self.archive.db.execute("SELECT * FROM jobs").fetchone(),
+            self.job,
+            result,
+            error,
+        )
+        self.assertEqual(
+            self.archive.db.execute("SELECT factor FROM hosts").fetchone()[0], 2
+        )
+
+    def test_additive_index_migration_preserves_existing_archive(self):
+        self.record()
+        self.archive.db.execute("ALTER TABLE requests DROP COLUMN provider_status")
+        self.archive.db.execute("ALTER TABLE requests DROP COLUMN provider_error")
+        self.archive.db.commit()
+        self.archive.close()
+        self.archive = Archive(self.root, self.config)
+        row = self.archive.db.execute(
+            "SELECT status,provider_status FROM requests"
+        ).fetchone()
+        self.assertEqual(tuple(row), (200, None))
+
     def test_request_failures_do_not_change_measurement_timestamp(self):
         self.record()
         self.record(b"", status=503)
