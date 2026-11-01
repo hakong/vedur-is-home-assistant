@@ -1,0 +1,172 @@
+{
+  "xml_obs": "<observations><station id=\"1470\" valid=\"1\"><name>Reykjav\u00edk H\u00e1ahl\u00ed\u00f0</name><time>2026-11-01 22:00:00</time><err /><link>http://en.vedur.is/weather/observations/areas/reykjavik/#group=101&amp;station=1470</link><F>5</F><D>S</D><FX>6</FX><FG>10</FG><T>8.9</T><W /><V /><R>0.4</R></station></observations>",
+  "xml_forec": "<forecasts><station id=\"1470\" valid=\"1\"><name>Reykjav\u00edk H\u00e1ahl\u00ed\u00f0</name><atime>2026-11-01 18:00:00</atime><err /><link>http://en.vedur.is/weather/forecasts/areas/reykjavik/#group=101&amp;station=1470</link><forecast><ftime>2026-11-02 00:00:00</ftime><F>6</F><D>SSW</D><T>9</T><W>Light rain</W></forecast><forecast><ftime>2026-11-02 01:00:00</ftime><F>6</F><D>SSW</D><T>9</T><W>Light rain</W></forecast></station></forecasts>",
+  "gott_observation": {
+    "observationTime": "2026-11-01T22:40:00",
+    "temperature": 8.9,
+    "windSpeed": 6.2,
+    "windDirection": 184,
+    "precipitation": 0.1,
+    "humidity": 95,
+    "maxWindGust": 8.5,
+    "pressure": 1025.9,
+    "icon": null,
+    "station": 1474,
+    "isManned": false,
+    "highestTemperature": 9.3,
+    "lowestTemperature": 8.7,
+    "maxWindSpeed": 6.8,
+    "visibility": null,
+    "dewPoint": 8.14,
+    "cloudCover": null
+  },
+  "gott_forecast": {
+    "today": [
+      {
+        "model": "ig",
+        "time": "2026-11-01T23:00:00",
+        "icon": "LightRain",
+        "temperature": 9,
+        "windSpeed": 7,
+        "windDirection": 189,
+        "precipitation": 0.2,
+        "humidity": 98,
+        "pressure": 1025,
+        "dewPoint": 8
+      },
+      {
+        "model": "ig",
+        "time": "2026-11-02T00:00:00",
+        "icon": "LightRain",
+        "temperature": 9,
+        "windSpeed": 6,
+        "windDirection": 192,
+        "precipitation": 0,
+        "humidity": 98,
+        "pressure": 1025,
+        "dewPoint": 8
+      }
+    ],
+    "nextDays": [
+      {
+        "model": "ig",
+        "time": "2026-11-01T23:00:00",
+        "icon": "LightRain",
+        "temperature": 9,
+        "windSpeed": 7,
+        "windDirection": 189,
+        "precipitation": 0.2,
+        "humidity": 98,
+        "pressure": 1025,
+        "dewPoint": 8
+      },
+      {
+        "model": "ig",
+        "time": "2026-11-02T00:00:00",
+        "icon": "LightRain",
+        "temperature": 9,
+        "windSpeed": 6,
+        "windDirection": 192,
+        "precipitation": 0,
+        "humidity": 98,
+        "pressure": 1025,
+        "dewPoint": 8
+      }
+    ]
+  },
+  "detail": [
+    {
+      "observationTime": "2026-11-01T22:50:00",
+      "temperature": 8.9,
+      "windSpeed": 6.7,
+      "windDirection": 184,
+      "precipitation": 0,
+      "dewPoint": 8.1,
+      "humidity": 95,
+      "maxWindGust": 10,
+      "pressure": 1026,
+      "station": 1474,
+      "highestTemperature": 8.9,
+      "lowestTemperature": 8.8,
+      "accumulatedPrecipitation": 342.6
+    },
+    {
+      "observationTime": "2026-11-01T22:40:00",
+      "temperature": 8.9,
+      "windSpeed": 6.2,
+      "windDirection": 184,
+      "precipitation": 0,
+      "dewPoint": 8.1,
+      "humidity": 95,
+      "maxWindGust": 8.5,
+      "pressure": 1026,
+      "station": 1474,
+      "highestTemperature": 9,
+      "lowestTemperature": 8.8,
+      "accumulatedPrecipitation": 342.6
+    }
+  ],
+  "gott_batch_observation": [
+    {
+      "stationName": "Reykjav\u00edk",
+      "stationDisplayName": "Reykjav\u00edk",
+      "stationId": 1,
+      "lastObservationTime": "2026-11-01T22:00:00",
+      "highestTemperature": 9.1,
+      "lowestTemperature": 8.8,
+      "windSpeed": 4.5,
+      "windDirection": 191,
+      "maxWindGust": null,
+      "precipitation": 0.4,
+      "icon": null
+    }
+  ],
+  "gott_batch_forecast": [
+    {
+      "stationName": "Reykjav\u00edk H\u00e1ahl\u00ed\u00f0",
+      "stationDisplayName": "Reykjav\u00edk H\u00e1ahl\u00ed\u00f0",
+      "stationId": 1470,
+      "isVirtual": false,
+      "hourlyForecasts": [
+        {
+          "temperature": 9,
+          "windSpeed": 5,
+          "windDirection": 188,
+          "icon": "LightRain",
+          "time": "2026-11-01T22:00:00",
+          "station": 1470,
+          "alerts": []
+        },
+        {
+          "temperature": 9,
+          "windSpeed": 6,
+          "windDirection": 199,
+          "icon": "LightRain",
+          "time": "2026-11-02T00:00:00",
+          "station": 1470,
+          "alerts": []
+        }
+      ],
+      "nextDaysForecasts": [
+        {
+          "temperature": 9,
+          "windSpeed": 5,
+          "windDirection": 188,
+          "icon": "LightRain",
+          "time": "2026-11-01T22:00:00",
+          "station": 1470,
+          "alerts": []
+        },
+        {
+          "temperature": 10,
+          "windSpeed": 8,
+          "windDirection": 176,
+          "icon": "Overcast",
+          "time": "2026-11-02T12:00:00",
+          "station": 1470,
+          "alerts": []
+        }
+      ]
+    }
+  ]
+}
