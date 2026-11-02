@@ -85,6 +85,18 @@ def next_slot(due, interval, now):
     return due + max(1, int((now - due) // interval) + 1) * interval
 
 
+def missing_observation(job, result):
+    """Recognize the observed Gottvedur no-data envelope, not arbitrary 404s."""
+    return (
+        job["kind"] in {"gott_observation", "detail"}
+        and urlsplit(job["url"]).hostname in {"gottvedur.is", "www.gottvedur.is"}
+        and result["status"] == 200
+        and not result["error"]
+        and result.get("provider_status") == 404
+        and result.get("provider_error") == "No observations found for station"
+    )
+
+
 def request_url(job, now):
     if job.get("cap_lookback_days") is not None:
         end = datetime.fromtimestamp(now, timezone.utc).date()
@@ -242,6 +254,7 @@ class Archive:
                     "INSERT OR IGNORE INTO hosts(host) VALUES (?)",
                     (urlsplit(job["url"]).hostname,),
                 )
+        self.restore_observation_sampling()
         self.db.execute(
             "UPDATE requests SET error='Collector interrupted before completion',finished=? WHERE finished IS NULL",
             (time.time(),),
@@ -261,6 +274,58 @@ class Archive:
         self.db.execute(
             "INSERT INTO events(at,kind,detail) VALUES (?,?,?)",
             (time.time(), kind, json.dumps(detail)),
+        )
+
+    def restore_observation_sampling(self):
+        """Release legacy no-data backoffs once, preserving the evidence ledger."""
+        policy = "observation_no_data_normal_cadence_v1"
+        if self.db.execute("SELECT 1 FROM meta WHERE key=?", (policy,)).fetchone():
+            return
+        now = time.time()
+        affected = []
+        for row in self.db.execute("SELECT * FROM jobs").fetchall():
+            job = json.loads(row["definition"])
+            latest = self.db.execute(
+                "SELECT * FROM requests WHERE job_id=? ORDER BY id DESC LIMIT 1",
+                (row["id"],),
+            ).fetchone()
+            if (
+                latest is None
+                or latest["parser_error"]
+                or not missing_observation(job, dict(latest))
+                or row["next_due"] <= now
+            ):
+                continue
+            due = min(
+                row["next_due"],
+                now + len(affected) * self.config["minimum_request_gap_seconds"],
+            )
+            due = max(
+                due,
+                latest["finished"]
+                + retry_after(
+                    json.loads(latest["headers"]).get("retry-after"), latest["finished"]
+                ),
+            )
+            self.db.execute("UPDATE jobs SET next_due=? WHERE id=?", (due, row["id"]))
+            affected.append(
+                dict(
+                    job_id=row["id"],
+                    last_request_id=latest["id"],
+                    last_response_at=latest["finished"],
+                    previous_next_due=row["next_due"],
+                    restored_next_due=due,
+                )
+            )
+        self.db.execute("INSERT INTO meta VALUES (?,?)", (policy, str(now)))
+        self.event(
+            "observation_sampling_policy",
+            dict(
+                policy=policy,
+                previous="Six-hour delay for provider 404 responses",
+                current="Known no-observation envelopes retain normal job cadence",
+                affected_jobs=affected,
+            ),
         )
 
     def close(self):
@@ -296,6 +361,7 @@ class Archive:
         return digest
 
     def record(self, request_id, job, result):
+        result["request_id"] = request_id
         digest = self.store_blob(result["body"])
         parser_error = None
         result["provider_status"] = None
@@ -365,6 +431,7 @@ class Archive:
             "SELECT * FROM hosts WHERE host=?", (host,)
         ).fetchone()
         status = result.get("provider_status") or result["status"]
+        no_data = missing_observation(job, result) and not parser_error
         failed = not successful_status(job, status) or result["error"] or parser_error
         failures = row["failures"] + 1 if failed else 0
         factor = host_row["factor"]
@@ -401,7 +468,20 @@ class Archive:
         elif successful_status(job, status) and not result["error"]:
             self.db.execute("UPDATE hosts SET failures=0 WHERE host=?", (host,))
         due = next_slot(row["next_due"], job["interval"] * factor, now)
-        if status is not None and 400 <= status < 500 and status not in {403, 408, 429}:
+        if no_data:
+            due = max(due, now + retry_after(result["headers"].get("retry-after"), now))
+            self.event(
+                "observation_missing",
+                dict(
+                    job_id=job["id"],
+                    request_id=result.get("request_id"),
+                    next_due=due,
+                    interval_seconds=job["interval"] * factor,
+                ),
+            )
+        elif (
+            status is not None and 400 <= status < 500 and status not in {403, 408, 429}
+        ):
             due = max(due, now + 21600)
         elif failed:
             due = max(due, now + min(3600, 300 * 2 ** min(failures - 1, 4)))

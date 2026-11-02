@@ -229,9 +229,120 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(export_body(self.root, request), body)
         job_row = self.archive.db.execute("SELECT * FROM jobs").fetchone()
         self.archive.reschedule(job_row, self.job, result, error)
+        self.assertLessEqual(
+            self.archive.db.execute("SELECT next_due FROM jobs").fetchone()[0],
+            result["finished"] + self.job["interval"],
+        )
+
+    def test_repeated_missing_observations_keep_cadence_and_all_evidence(self):
+        self.job["kind"] = "detail"
+        self.job["interval"] = 900
+        body = b'{"title":"Not Found","type":"about:blank","status":404,"detail":"No observations found for station"}'
+        for _ in range(5):
+            row = self.archive.db.execute("SELECT * FROM jobs").fetchone()
+            with patch("time.time", return_value=max(time.time(), row["next_due"])):
+                request, result, error = self.record(body)
+            self.archive.reschedule(row, self.job, result, error)
+            next_due = self.archive.db.execute("SELECT next_due FROM jobs").fetchone()[
+                0
+            ]
+            self.assertLessEqual(next_due, result["finished"] + 900)
+            self.assertEqual(export_body(self.root, request), body)
+        self.assertEqual(
+            self.archive.db.execute("SELECT COUNT(*) FROM requests").fetchone()[0], 5
+        )
+        self.assertEqual(
+            self.archive.db.execute("SELECT COUNT(*) FROM samples").fetchone()[0], 0
+        )
+        self.assertEqual(
+            self.archive.db.execute(
+                "SELECT COUNT(*) FROM events WHERE kind='observation_missing'"
+            ).fetchone()[0],
+            5,
+        )
+        self.assertEqual(
+            tuple(
+                self.archive.db.execute(
+                    "SELECT factor,blocked_until FROM hosts"
+                ).fetchone()
+            ),
+            (1, 0),
+        )
+
+    def test_no_data_respects_explicit_retry_after(self):
+        _, result, error = self.record(
+            b'{"title":"Not Found","type":"about:blank","status":404,"detail":"No observations found for station"}',
+            headers={"retry-after": "7200"},
+        )
+        self.archive.reschedule(
+            self.archive.db.execute("SELECT * FROM jobs").fetchone(),
+            self.job,
+            result,
+            error,
+        )
+        self.assertGreaterEqual(
+            self.archive.db.execute("SELECT next_due FROM jobs").fetchone()[0],
+            result["finished"] + 7200,
+        )
+
+    def test_other_problem_404_still_backs_off(self):
+        _, result, error = self.record(
+            b'{"title":"Not Found","type":"about:blank","status":404,"detail":"Unknown endpoint"}'
+        )
+        self.archive.reschedule(
+            self.archive.db.execute("SELECT * FROM jobs").fetchone(),
+            self.job,
+            result,
+            error,
+        )
         self.assertGreaterEqual(
             self.archive.db.execute("SELECT next_due FROM jobs").fetchone()[0],
             result["finished"] + 21600,
+        )
+
+    def test_legacy_no_data_delay_is_released_once_with_audit_event(self):
+        request, result, _ = self.record(
+            b'{"title":"Not Found","type":"about:blank","status":404,"detail":"No observations found for station"}'
+        )
+        original = dict(self.archive.db.execute("SELECT key,value FROM meta"))
+        old_due = time.time() + 21600
+        self.archive.db.execute("UPDATE jobs SET next_due=?,failures=2", (old_due,))
+        self.archive.db.execute(
+            "DELETE FROM meta WHERE key='observation_no_data_normal_cadence_v1'"
+        )
+        self.archive.db.commit()
+        before = dict(
+            self.archive.db.execute(
+                "SELECT * FROM requests WHERE id=?", (request,)
+            ).fetchone()
+        )
+        self.archive.close()
+        self.archive = Archive(self.root, self.config)
+        row = self.archive.db.execute("SELECT * FROM jobs").fetchone()
+        self.assertLess(row["next_due"], time.time() + 10)
+        event = json.loads(
+            self.archive.db.execute(
+                "SELECT detail FROM events WHERE kind='observation_sampling_policy' ORDER BY id DESC LIMIT 1"
+            ).fetchone()[0]
+        )
+        self.assertEqual(event["affected_jobs"][0]["previous_next_due"], old_due)
+        self.assertEqual(
+            before,
+            dict(
+                self.archive.db.execute(
+                    "SELECT * FROM requests WHERE id=?", (request,)
+                ).fetchone()
+            ),
+        )
+        self.assertEqual(
+            dict(self.archive.db.execute("SELECT key,value FROM meta"))["stop_at"],
+            original["stop_at"],
+        )
+        self.archive.close()
+        self.archive = Archive(self.root, self.config)
+        self.assertEqual(
+            self.archive.db.execute("SELECT next_due FROM jobs").fetchone()[0],
+            row["next_due"],
         )
 
     def test_embedded_rate_limit_also_slows_host(self):

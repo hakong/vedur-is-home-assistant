@@ -115,9 +115,25 @@ to Git. Small reviewed provider excerpts are used as parser test fixtures.
   unless Retry-After requests longer, plus per-job error spacing.
 - Missing/invalid endpoint responses such as HTTP 404/422 are retried no more
   frequently than every six hours. They do not block healthy endpoints.
+- The observed Gottvedur HTTP-200 / JSON-404 envelope whose detail is exactly
+  `No observations found for station` is different: latest-observation and
+  hourly-detail jobs retain their nominal cadence (including any existing host
+  slowdown or explicit Retry-After). Every response remains a provider error in
+  the ledger, with its original body, rather than becoming a zero measurement.
+  Each occurrence also records an `observation_missing` event with the request ID
+  and next polling time. Repeated absence never increases its polling interval.
 - Parser failures keep the complete body and apply per-job backoff. HTTP success
   and successful indexing are reported separately.
 - Backoff, slowdown factors, schedules and run events survive process restarts.
+
+The normal-cadence no-observation policy was added on November 2 after identifying
+undersampling in the initial campaign. On its first startup, the collector releases
+existing delays caused by that exact envelope, spreading resumed jobs through the
+serial queue. An `observation_sampling_policy` event retains the activation time,
+affected job IDs, last response IDs and old/new deadlines. Campaign dates, raw
+responses, immutable job definitions and genuine host backoff remain intact.
+Research before that event must account for the missing sampling intervals; the
+ledger records requests actually made, not hypothetical observations in the gaps.
 
 ## Running and inspecting
 
