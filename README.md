@@ -9,4 +9,4 @@ approved, or endorsed by the Icelandic Meteorological Office (IMO), and is not
 affiliated with that organisation. Provider names identify data sources only.
 Weather data and trademarks remain subject to their owners' rights and terms.
 
-Collection design and operation: [research/README.md](research/README.md).
+The [research plan](research/README.md) describes the collection and its goals.
